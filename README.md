@@ -1,6 +1,6 @@
 # HuiAnswer
 
-Java RAG 学习项目。当前阶段：知识库 CRUD，以及文档上传、本地保存和文本解析。
+Java RAG 学习项目。当前阶段：知识库 CRUD、文档上传与分块，以及 Embedding 客户端和批量片段入库。
 
 ## 当前实现
 
@@ -8,7 +8,17 @@ Java RAG 学习项目。当前阶段：知识库 CRUD，以及文档上传、本
 - rag：应用启动入口、知识实体、Mapper 和数据库类型转换；目前一起启动一个进程。
 - 三张表：t_knowledge_base、t_knowledge_document、t_knowledge_chunk。
 - 片段原文和嵌入向量同表，向量列为 vector(4096)。
-- 建表、知识库 CRUD 和文档上传/解析已实现；切分、Embedding、检索和问答接口会按课程逐步实现。
+- 建表、知识库 CRUD、文档上传/解析/分块已实现；Embedding 客户端与批量片段入库已验证。上传接口尚未调用向量化入库，检索和问答接口待后续课程。
+
+## Maven 依赖管理
+
+父 pom.xml 的 dependencyManagement 统一管理依赖版本；Spring Boot BOM 管理 Spring、Jackson、PostgreSQL 等版本。
+OkHttp 使用父 POM 的 okhttp.version=4.12.0；Tika 核心、文本解析和 PDF 解析模块使用 tika.version=3.2.3。
+rag/pom.xml 的 dependencies 声明本模块需要的 OkHttp、tika-core、tika-parser-text-module、tika-parser-pdf-module，不再写它们的 version。
+dependencyManagement 不会自动引入依赖，也不会仅凭 org.apache.tika 这个 groupId 管理全部模块；每个实际使用的 artifactId 需要匹配的管理条目。
+父 POM 中已有 tika-parsers-standard-package 的管理条目，目前 rag 只引入所需文本/PDF 模块，不引入整套解析器。
+
+参考：https://maven.apache.org/guides/introduction/introduction-to-dependency-mechanism.html
 
 ## 知识库 CRUD
 
@@ -94,6 +104,63 @@ LocalDocumentStorage.save/open -> TikaDocumentParser.parse -> KnowledgeDocumentM
 
 Tika 参考：https://tika.apache.org/3.2.3/gettingstarted.html 、https://tika.apache.org/3.2.3/examples.html
 
+## 第 04 课：文本分块
+
+上传解析后使用完整 parsed.text() 分块，返回并记录 chunkCount；不使用 2000 字符的预览作为分块输入。
+当前参数为 chunk-size=500、OVERLAP=100。算法按 Unicode 码点计数，普通汉字通常占 1，避免拆开 emoji 的 UTF-16 代理对。
+每块最多 500 个码点，相邻块重叠 100；短文保留，最后不满一块也保留，到全文末尾立即停止。
+全为空白的原文拒绝，纯空白窗口跳过；配置必须满足 chunkSize > 0、0 <= overlap < chunkSize。
+按 String.length() 返回的 textLength/预览长度与码点数量可能不同，尤其包含 emoji 时；两者也都不等于模型 token 数。
+
+文档目前仍是 pending + parsed，上传只计算分块数量。EmbeddingChunks.doEmbedding 已在第 05 课实现，但上传接口尚未调用 saveChunks。
+saveChunks 按序号将原文与向量配对，只保留返回数量对应检查，不再在业务层额外扫描每个向量的维度和数值。
+组装实体列表后使用 chunkMapper.insert(records, 100) 进行 JDBC 批处理，每批 100 条 flush；当前 Spring 事务统一提交，后续批次失败也会回滚已执行的批次。
+PgVectorTypeHandler 序列化时仍检查有限数值，数据库 vector(4096) 列负责维度约束。批处理仍需要遍历实体与序列化向量，优化的是数据库交互；未进行性能基准测试。
+参考：https://baomidou.com/guides/batch-operation/ 、https://jdbc.postgresql.org/documentation/use/#connection-parameters
+后续把 saveChunks 接入文档导入流程时，全部向量化与写库成功后再更新文档 success，失败状态与重试将在对应课程补齐。
+
+本次验证在独立的新源码副本中完成，避免旧 target/classes 遮蔽用户调整包路径后的问题。
+回归用例先在旧实现上复现短文丢失、重复尾块、emoji 边界和序号/向量配对错误；修复后 Maven verify 30 项通过，无跳过。
+真实 PostgreSQL 验证批量片段映射、审计字段填充、同一事务内文档外键可见，以及第一批 100 条已 flush 后第二批冲突仍全部回滚。测试向量仅用于验证映射，不代表真实模型已接通；不调用模型或删除磁盘文件。
+
+## 第 05 课：Embedding 文本向量化
+
+入口：rag/src/main/java/com/lhsg/HuiAnswer/rag/knowledge/embeddingUtil/EmbeddingChunks.java。
+输入 List<String> 文本块，输出按原输入顺序排列的 List<float[]>。这个类只调用模型，不写数据库。
+
+阅读顺序：
+1. doEmbedding：检查输入与配置，使用 subList 每次取最多 32 块，逐批调用并拼接结果。
+2. requestBatch：Map 组装 model/input/encoding_format/dimensions，Gson.toJson 转为 JSON；OkHttp 发 POST，处理 HTTP 状态。
+3. parseResponse：Gson.fromJson 转成 EmbeddingResponse/EmbeddingData 对象，再根据每项 index 放回本批位置；embedding 已是 float[]。
+4. 回看 KnowledgeChunkServiceImpl.saveChunks：按 i 配对原文与向量，再每批 100 条写数据库。
+
+请求地址默认 https://api.siliconflow.cn/v1/embeddings。按当前简化实现，url 配置主机地址 https://api.siliconflow.cn，客户端拼接 /v1/embeddings。
+模型使用 embedding-model，输出维度来自 rag.vector.dimension=4096；不是用 chat-model 生成回答。
+api-key 仍通过 HUIANSWER_AI_API_KEY 环境变量绑定，不在源码、配置或本笔记保存真实值。
+新增 embedding-batch-size=32、embedding-timeout-seconds=60；连接超时 10 秒，客户端复用连接。
+32 是首版对齐参考项目的批次选择，不是所有模型的通用上限；模型调用批次与数据库写入批次独立。
+
+RequestBody.create 把 JSON 字符串转为 UTF-8 请求体；newCall(request).execute() 同步发请求，response.body().string() 读取响应正文。
+Gson 负责 Java/JSON 转换，OkHttpClient 负责网络传输；try-with-resources 关闭 Response。真正的模型推理由第三方完成。
+Gson 阅读重点：gson.toJson(body) 把普通 Map 转为 JSON 字符串；gson.fromJson(body, EmbeddingResponse.class) 按字段名填充响应对象。
+EmbeddingResponse.data 是 List<EmbeddingData>；每项 Integer index 表示本批位置，float[] embedding 是模型返回的向量。两个响应类使用 static 嵌套类，不依赖外围对象。
+Gson 2.13.1 的版本已由父 POM 管理，rag 子模块只声明依赖。参考：https://google.github.io/gson/UserGuide.html。
+每个 Call 单独设置完整请求超时，覆盖连接、发送和读取正文；读写不再单独使用更短的默认超时。
+响应中 index 对应本批 input 的位置；不能把它直接当作整个文档的序号。
+保留数量、index 范围/重复及必要的响应结构检查，保证文本与向量一一对应；没有恢复逐元素维度/有限值预校验。
+401/403、429、其他 HTTP 错误、超时、网络故障、中断和格式错误会转为 ServiceException。
+请求前检查线程中断，I/O 报告中断时保留标志；任意批次失败都不返回部分结果。当前不实现应用层重试或模型切换，OkHttp 关闭连接失败重试与重定向。
+错误不回显请求头、API key、第三方响应正文或 JSON 解析原文。
+
+验证：本地 HTTP 模拟服务新增 25 项测试通过，包括倒序返回、33 块跨批配对、缺配置、坏响应、后续批失败、限流、超时和中断。
+已有 30 项 CRUD/上传/解析/数据库回归通过。另用两条合成制度文本调用真实服务，返回 2 个 4096 维向量。
+切换 OkHttp 后，完整 Maven verify 55/55 通过，无跳过；用相同两条合成文本验证真实接口，仍返回两个 4096 维向量。
+切换 Gson 后，在独立源码副本中 Maven verify 仍是 55/55 通过，无跳过；本地 HTTP 用例验证中文、引号、反斜杠与换行的序列化，以及响应对象解析和 index 配对。
+没有批量向量化用户文件，没有新增业务记录或重启用户正在运行的应用。
+上传接口仍返回 pending + parsed + chunkCount。下一步接通完整导入：登记文档 -> 向量化 -> 写片段 -> 更新成功/失败状态。
+
+参考：https://api-docs.siliconflow.cn/docs/api/embeddings-post 、https://github.com/square/okhttp/blob/parent-4.12.0/okhttp/src/main/kotlin/okhttp3/Call.kt
+
 ## 本地数据库
 
 现有 Docker 容器：postgres，镜像 pgvector/pgvector:pg16，宿主机端口 5432。
@@ -153,7 +220,7 @@ KnowledgeChunkMapper.deletePhysicallyByDocId；后续课程会实现该服务及
 
 ## 验证
 
-真实 PostgreSQL 集成测试：KnowledgeDatabaseIntegrationTest、KnowledgeBaseApiIntegrationTest、KnowledgeBaseMutationIntegrationTest、KnowledgeDocumentApiIntegrationTest；文本解析用例为 TikaDocumentParserTest。
+真实 PostgreSQL 集成测试：KnowledgeDatabaseIntegrationTest、KnowledgeBaseApiIntegrationTest、KnowledgeBaseMutationIntegrationTest、KnowledgeDocumentApiIntegrationTest；文本解析用例为 TikaDocumentParserTest；分块与配对验证为 KnowledgeChunkServiceTest、KnowledgeChunkPersistenceIntegrationTest；本地 HTTP 向量接口验证为 EmbeddingChunksTest。
 验证向量与 JSON 映射、知识库范围、按文档物理清理、维度约束和归属约束；以及知识库 CRUD、参数校验、逻辑删除过滤和响应 DTO。关联删除覆盖误删隔离、失败回滚及审计时间。
 普通用例使用测试事务回滚；专用故障用例关闭外层测试事务，验证 Service 自身回滚，然后按本用例 ID 清理专用记录。测试不保留业务记录、不调用模型或删除磁盘文件。
 

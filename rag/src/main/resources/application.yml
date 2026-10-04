@@ -1,0 +1,41 @@
+server:
+  port: ${HUIANSWER_PORT:8080}
+
+spring:
+  application:
+    name: huianswer-rag
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
+      # 上传临时文件也放到 D 盘。Spring Boot 启动时会创建该目录。
+      location: ${HUIANSWER_UPLOAD_TEMP_DIR:D:/develop/huianswer-data/tmp}
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: ${HUIANSWER_DB_URL:jdbc:postgresql://localhost:5432/huianswer?reWriteBatchedInserts=true}
+    username: ${HUIANSWER_DB_USERNAME:postgres}
+    password: ${HUIANSWER_DB_PASSWORD}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+rag:
+  storage:
+    local-root: ${HUIANSWER_STORAGE_DIR:D:/develop/huianswer-data/documents}
+  parse:
+    max-characters: 1000000
+  vector:
+    # 与 sql/01_knowledge.sql 的 vector(4096) 对齐；改模型维度时需要同时迁移表。
+    dimension: 4096
+    metric-type: COSINE
+  ai:
+    provider: siliconflow
+    siliconflow:
+      url: ${HUIANSWER_AI_URL:https://api.siliconflow.cn}
+      api-key: ${HUIANSWER_AI_API_KEY:}
+      chat-model: ${HUIANSWER_CHAT_MODEL:Qwen/Qwen3-32B}
+      embedding-model: ${HUIANSWER_EMBEDDING_MODEL:Qwen/Qwen3-Embedding-8B}
+  chunk:
+    chunk-size: 500
+    OVERLAP: 100

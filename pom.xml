@@ -58,6 +58,17 @@
                 <version>${tika.version}</version>
             </dependency>
 
+            <dependency>
+                <groupId>org.apache.tika</groupId>
+                <artifactId>tika-parser-text-module</artifactId>
+                <version>${tika.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tika</groupId>
+                <artifactId>tika-parser-pdf-module</artifactId>
+                <version>${tika.version}</version>
+            </dependency>
+
             <!-- OkHttp: HTTP客户端，调SiliconFlow API -->
             <dependency>
                 <groupId>com.squareup.okhttp3</groupId>

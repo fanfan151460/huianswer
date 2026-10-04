@@ -1,5 +1,7 @@
 package com.lhsg.HuiAnswer.rag.knowledge;
 
+import com.lhsg.HuiAnswer.framework.exception.ClientException;
+import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.embeddingUtil.EmbeddingChunks;
@@ -66,16 +68,13 @@ class KnowledgeChunkServiceTest {
         List<float[]> vectors = List.of(vector(1), vector(2), vector(3));
         when(embedding.doEmbedding(anyList())).thenReturn(vectors);
         List<KnowledgeChunkDO> written = new ArrayList<>();
-        when(mapper.insert(any(KnowledgeChunkDO.class))).thenAnswer(call -> {
-            written.add(call.getArgument(0));
-            return 1;
-        });
-        // 同时捕获旧版的集合插入，使断言直接检查配对结果。
-        lenient().when(mapper.insert(anyCollection())).thenAnswer(call -> {
+        when(mapper.insert(anyCollection(), eq(100))).thenAnswer(call -> {
             written.addAll(call.getArgument(0));
             return List.of();
         });
         service.saveChunks(List.of("第一块", "第二块", "第三块"), 7L, 8L);
+        verify(mapper).insert(anyCollection(), eq(100));
+        verify(mapper, never()).insert(any(KnowledgeChunkDO.class));
         assertEquals(3, written.size());
         for (int i = 0; i < 3; i++) {
             assertEquals(i, written.get(i).getChunkIndex());
@@ -84,6 +83,34 @@ class KnowledgeChunkServiceTest {
             assertEquals(7L, written.get(i).getKbId());
             assertEquals(8L, written.get(i).getDocId());
         }
+    }
+
+    @Test
+    void shouldRejectInvalidConfigurationWithoutLooping() {
+        for (int[] settings : List.of(new int[]{0, 0}, new int[]{500, -1}, new int[]{500, 500}, new int[]{500, 501})) {
+            ReflectionTestUtils.setField(service, "CHUNK_SIZE", settings[0]);
+            ReflectionTestUtils.setField(service, "OVERLAP", settings[1]);
+            assertThrows(IllegalArgumentException.class, () -> service.toChunks("有效原文"));
+        }
+        ReflectionTestUtils.setField(service, "CHUNK_SIZE", 1);
+        ReflectionTestUtils.setField(service, "OVERLAP", 0);
+        assertEquals(List.of("😀", "中"), service.toChunks("😀中"));
+    }
+
+    @Test
+    void shouldRejectBlankTextAndOmitWhitespaceOnlyWindows() {
+        assertThrows(ClientException.class, () -> service.toChunks(null));
+        assertThrows(ClientException.class, () -> service.toChunks(" \n\t"));
+        List<String> chunks = service.toChunks("a" + " ".repeat(999) + "b");
+        assertEquals(2, chunks.size());
+        assertTrue(chunks.stream().noneMatch(String::isBlank));
+    }
+
+    @Test
+    void shouldRejectWrongVectorCountBeforeWriting() {
+        when(embedding.doEmbedding(anyList())).thenReturn(List.of());
+        assertThrows(ServiceException.class, () -> service.saveChunks(List.of("原文"), 7L, 8L));
+        verifyNoInteractions(mapper);
     }
 
     private float[] vector(float value) {

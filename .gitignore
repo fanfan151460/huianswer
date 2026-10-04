@@ -8,3 +8,4 @@ application-local.yml
 application-local.properties
 *.log
 *.ps1
+*.md

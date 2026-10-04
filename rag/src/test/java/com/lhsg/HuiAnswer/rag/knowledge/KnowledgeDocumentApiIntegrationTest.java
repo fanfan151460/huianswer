@@ -65,6 +65,7 @@ class KnowledgeDocumentApiIntegrationTest {
         assertEquals(kbId, data.path("kbId").asLong());
         assertEquals("pending", data.path("status").asText());
         assertEquals("parsed", data.path("parseStatus").asText());
+        assertEquals(1, data.path("chunkCount").asInt());
         assertEquals(text, data.path("textPreview").asText());
         assertFalse(data.path("previewTruncated").asBoolean());
         assertFalse(data.has("filePath"));
@@ -83,6 +84,7 @@ class KnowledgeDocumentApiIntegrationTest {
         assertEquals(text.length(), first.path("textLength").asInt());
         assertEquals("a".repeat(1999), first.path("textPreview").asText());
         assertTrue(first.path("previewTruncated").asBoolean());
+        assertEquals(6, first.path("chunkCount").asInt());
         var firstDoc = documentMapper.selectById(first.path("id").asLong());
         var secondDoc = documentMapper.selectById(second.path("id").asLong());
         assertNotEquals(firstDoc.getFilePath(), secondDoc.getFilePath());

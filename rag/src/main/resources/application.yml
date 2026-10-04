@@ -36,6 +36,9 @@ rag:
       api-key: ${HUIANSWER_AI_API_KEY:}
       chat-model: ${HUIANSWER_CHAT_MODEL:Qwen/Qwen3-32B}
       embedding-model: ${HUIANSWER_EMBEDDING_MODEL:Qwen/Qwen3-Embedding-8B}
+      # 每次 HTTP 请求的文本块数量，与数据库写入批次独立。
+      embedding-batch-size: 32
+      embedding-timeout-seconds: 60
   chunk:
     chunk-size: 500
     OVERLAP: 100

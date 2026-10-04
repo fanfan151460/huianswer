@@ -61,6 +61,10 @@
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
         <!-- 公共框架：统一返回结果、全局异常处理、防重复提交 -->
         <dependency>
             <groupId>com.lhsg</groupId>

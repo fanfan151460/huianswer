@@ -20,6 +20,10 @@ import static org.junit.jupiter.api.Assertions.*;
 @EnabledIfEnvironmentVariable(named = "HUIANSWER_DB_PASSWORD", matches = ".+")
 @Transactional
 class KnowledgeDatabaseIntegrationTest {
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer producer;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private org.springframework.data.redis.core.StringRedisTemplate redis;
     @Autowired
     private KnowledgeBaseMapper baseMapper;
     @Autowired

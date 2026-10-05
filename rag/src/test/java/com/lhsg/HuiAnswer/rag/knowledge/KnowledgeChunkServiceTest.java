@@ -72,7 +72,7 @@ class KnowledgeChunkServiceTest {
             written.addAll(call.getArgument(0));
             return List.of();
         });
-        service.saveChunks(List.of("第一块", "第二块", "第三块"), 7L, 8L);
+        service.saveChunks(service.prepareChunks(List.of("第一块", "第二块", "第三块"), 7L, 8L));
         verify(mapper).insert(anyCollection(), eq(100));
         verify(mapper, never()).insert(any(KnowledgeChunkDO.class));
         assertEquals(3, written.size());
@@ -109,7 +109,7 @@ class KnowledgeChunkServiceTest {
     @Test
     void shouldRejectWrongVectorCountBeforeWriting() {
         when(embedding.doEmbedding(anyList())).thenReturn(List.of());
-        assertThrows(ServiceException.class, () -> service.saveChunks(List.of("原文"), 7L, 8L));
+        assertThrows(ServiceException.class, () -> service.prepareChunks(List.of("原文"), 7L, 8L));
         verifyNoInteractions(mapper);
     }
 

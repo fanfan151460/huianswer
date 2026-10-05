@@ -26,6 +26,8 @@
         <hutool.version>5.8.27</hutool.version>
         <mybatis-plus.version>3.5.12</mybatis-plus.version>
         <fastjson2.version>2.0.43</fastjson2.version>
+        <redisson.version>3.21.3</redisson.version>
+        <rocketmq-spring-boot.version>2.3.0</rocketmq-spring-boot.version>
     </properties>
 
     <dependencyManagement>
@@ -103,6 +105,19 @@
                 <artifactId>fastjson2</artifactId>
                 <version>${fastjson2.version}</version>
             </dependency>
+
+            <!--redisson-->
+            <dependency>
+                <groupId>org.redisson</groupId>
+                <artifactId>redisson-spring-boot-starter</artifactId>
+                <version>${redisson.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.rocketmq</groupId>
+                <artifactId>rocketmq-spring-boot-starter</artifactId>
+                <version>${rocketmq-spring-boot.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -118,6 +133,10 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.2.5</version>
+                    <configuration>
+                        <!-- Windows JDK 17 的 NIO 内部管道使用 UNIX socket；短临时路径避免连接失败。 -->
+                        <argLine>-Djava.io.tmpdir=D:/develop/huiAnswer/data/tmp -Djdk.net.unixdomain.tmpdir=D:/develop/huiAnswer/data/tmp -Drocketmq.client.logRoot=D:/develop/huiAnswer/data/rocketmq/client-logs</argLine>
+                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>

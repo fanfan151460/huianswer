@@ -32,6 +32,10 @@ import static org.mockito.Mockito.when;
 @EnabledIfEnvironmentVariable(named = "HUIANSWER_DB_PASSWORD", matches = ".+")
 @Transactional
 class KnowledgeChunkPersistenceIntegrationTest {
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer producer;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private org.springframework.data.redis.core.StringRedisTemplate redis;
     @Autowired private IKnowledgeChunkService service;
     @Autowired private KnowledgeBaseMapper baseMapper;
     @Autowired private KnowledgeDocumentMapper documentMapper;
@@ -45,7 +49,7 @@ class KnowledgeChunkPersistenceIntegrationTest {
         KnowledgeDocumentDO document = createDocument();
         List<float[]> vectors = List.of(vector(1), vector(2), vector(3));
         when(embedding.doEmbedding(anyList())).thenReturn(vectors);
-        service.saveChunks(List.of("片段甲", "片段乙", "片段丙"), document.getKbId(), document.getId());
+        service.saveChunks(service.prepareChunks(List.of("片段甲", "片段乙", "片段丙"), document.getKbId(), document.getId()));
         var rows = chunkMapper.selectList(Wrappers.<KnowledgeChunkDO>lambdaQuery()
                 .eq(KnowledgeChunkDO::getDocId, document.getId()).orderByAsc(KnowledgeChunkDO::getChunkIndex));
         assertEquals(3, rows.size());
@@ -77,8 +81,8 @@ class KnowledgeChunkPersistenceIntegrationTest {
             when(embedding.doEmbedding(anyList())).thenReturn(
                     IntStream.range(0, 101).mapToObj(i -> vector(i + 1)).toList());
             // 第一批 100 条已 flush，第二批与原有序号 100 冲突，仍须全部回滚。
-            assertThrows(RuntimeException.class, () -> service.saveChunks(chunks,
-                    document.getKbId(), document.getId()));
+            assertThrows(RuntimeException.class, () -> service.saveChunks(service.prepareChunks(chunks,
+                    document.getKbId(), document.getId())));
             var rows = chunkMapper.selectList(Wrappers.<KnowledgeChunkDO>lambdaQuery()
                     .eq(KnowledgeChunkDO::getDocId, document.getId()));
             assertEquals(1, rows.size());

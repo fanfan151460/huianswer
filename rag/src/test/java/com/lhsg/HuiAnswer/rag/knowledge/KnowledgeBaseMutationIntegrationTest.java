@@ -34,6 +34,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @EnabledIfEnvironmentVariable(named = "HUIANSWER_DB_PASSWORD", matches = ".+")
 @Transactional
 class KnowledgeBaseMutationIntegrationTest {
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer producer;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private org.springframework.data.redis.core.StringRedisTemplate redis;
     private static final String BASE = "/api/knowledge-base";
 
     @Autowired

@@ -3,16 +3,20 @@ package com.lhsg.HuiAnswer.rag.knowledge.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
+import com.lhsg.HuiAnswer.framework.duplicate.NoDuplicateSubmit;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeDocumentDO;
+import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.documentUtil.parser.ParsedDocument;
 import com.lhsg.HuiAnswer.rag.knowledge.documentUtil.parser.TikaDocumentParser;
 import com.lhsg.HuiAnswer.rag.knowledge.documentUtil.storage.LocalDocumentStorage;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeDocumentRespDTO;
+import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.DocumentMetadataDTO;
+import com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg;
+import com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeChunkService;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeDocumentService;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +29,7 @@ import java.io.InputStream;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.Objects;
 
 import static com.lhsg.HuiAnswer.rag.knowledge.enums.FileStatus.*;
 import static com.lhsg.HuiAnswer.rag.knowledge.enums.ParseStatus.*;
@@ -43,8 +48,10 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
     private final Gson gson;
     private final IKnowledgeChunkService chunkService;
     private final TransactionTemplate transactionTemplate;
+    private final DocumentProducer producer;
 
     @Override
+    @NoDuplicateSubmit
     public KnowledgeDocumentRespDTO uploadDocument(Long kbId, MultipartFile file) {
         validateKbId(kbId);
         String name = validateFile(file);
@@ -73,64 +80,132 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
             return null;
         });
 
-        ParsedDocument parsed;
-        try (InputStream input = storage.open(path)) {
-            parsed = parser.parse(input, name, extension);
+        return enqueue(document);
+    }
+
+    private KnowledgeDocumentRespDTO enqueue(KnowledgeDocumentDO document) {
+        DocumentMsg msg = new DocumentMsg().setKbId(document.getKbId()).setDocId(document.getId());
+        try {
+            producer.send(msg);
+        } catch (Exception e) {
+            log.error("发送文档任务失败，docId={}", document.getId(), e);
+            saveFailure(msg, readMetadata(document), "文档消息发送失败，请稍后重试");
+        }
+        return getDocument(document.getKbId(), document.getId());
+    }
+
+    @Override
+    public KnowledgeDocumentRespDTO getDocument(Long kbId, Long docId) {
+        return toRespDTO(requireDocument(kbId, docId));
+    }
+
+    @Override
+    public KnowledgeDocumentRespDTO retryDocument(Long kbId, Long docId) {
+        KnowledgeDocumentDO document = transactionTemplate.execute(status -> {
+            KnowledgeDocumentDO current = lockDocument(kbId, docId);
+            if (!FILE_FAILED.status().equals(current.getStatus())) {
+                throw new ClientException("只有处理失败的文档可以手动重试");
+            }
+            JsonObject metadata = readMetadata(current);
+            metadata.remove("errorMessage");
+            metadata.remove("parseStatus");
+            updateDocument(current.setStatus(FILE_PENDING.status()), metadata);
+            return current;
+        });
+        return enqueue(document);
+    }
+
+    private KnowledgeDocumentDO requireDocument(Long kbId, Long docId) {
+        validateKbId(kbId);
+        if (docId == null || docId <= 0) { throw new ClientException("文档ID必须是正整数"); }
+        if (baseMapper.selectById(kbId) == null) { throw new ClientException("知识库不存在或已被删除"); }
+        KnowledgeDocumentDO document = documentMapper.selectById(docId);
+        if (document == null || !Objects.equals(kbId, document.getKbId())) {
+            throw new ClientException("文档不存在或已被删除");
+        }
+        return document;
+    }
+
+    @Override
+    public void consumeDocument(DocumentMsg msg) {
+        KnowledgeDocumentDO document = requireDocument(msg.getKbId(), msg.getDocId());
+        JsonObject metadata = readMetadata(document);
+        metadata.remove("errorMessage");
+        metadata.remove("parseStatus");
+        try {
+            // 先提交 running，外部轮询可以看到处理中的状态。
+            transactionTemplate.executeWithoutResult(status -> {
+                KnowledgeDocumentDO current = lockDocument(msg.getKbId(), msg.getDocId());
+                updateDocument(current.setStatus(FILE_RUNNING.status()), metadata);
+            });
+
+            String extension = document.getDocName().substring(document.getDocName().lastIndexOf('.') + 1)
+                    .toLowerCase(Locale.ROOT);
+            ParsedDocument parsed;
+            try (InputStream input = storage.open(document.getFilePath())) {
+                parsed = parser.parse(input, document.getDocName(), extension);
+            }
             metadata.addProperty("parseStatus", PARSE_PARSED.status());
             metadata.addProperty("mediaType", parsed.mediaType());
             metadata.addProperty("textLength", parsed.text().length());
-        } catch (Exception e) {
-            return markFailed(document, metadata, PARSE_FAILED.status(), e, "读取或解析文档失败，请重试");
-        }
-
-        try {
             List<String> chunks = chunkService.toChunks(parsed.text());
-            transactionTemplate.execute(status -> {
-                // 解析期间知识库可能已删除；写入前重新检查并锁定。
-                if (baseMapper.selectActiveForUpdate(kbId) == null) {
-                    throw new ClientException("知识库不存在或已被删除");
-                }
-                // TODO 后续拆分向量化和写库，避免网络 IO 占用事务连接。
-                chunkService.saveChunks(chunks, kbId, document.getId());
-                metadata.addProperty("chunkCount", chunks.size());
-                metadata.addProperty("parseStatus", PARSE_SUCCESS.status());
-                document.setStatus(FILE_SUCCESS.status()).setMetadata(metadata.toString()).setUpdateTime(null);
-                // updateById 使用实体上的 JsonbTypeHandler，且同步了响应对象。
-                if (documentMapper.updateById(document) != 1) {
-                    throw new ServiceException("更新文档状态失败");
-                }
-                return null;
+
+            // 解析、分块、模型 HTTP 调用都在事务外，只把最终写库放进事务。
+            List<KnowledgeChunkDO> records = chunkService.prepareChunks(chunks, msg.getKbId(), msg.getDocId());
+            transactionTemplate.executeWithoutResult(status -> {
+                KnowledgeDocumentDO current = lockDocument(msg.getKbId(), msg.getDocId());
+                chunkService.saveChunks(records);
+                JsonObject completedMetadata = metadata.deepCopy();
+                completedMetadata.addProperty("parseStatus", PARSE_SUCCESS.status());
+                completedMetadata.addProperty("chunkCount", records.size());
+                // 更新文档状态
+                updateDocument(current.setStatus(FILE_SUCCESS.status()), completedMetadata);
             });
         } catch (Exception e) {
-            // execute 已经结束并回滚，failed 在另一个短事务里提交。
-            return markFailed(document, metadata, PARSE_PARSED.status(), e, "文档分块、向量化或入库失败，请重试");
+            log.error("文档处理失败，docId={}", msg.getDocId(), e);
+            if (!metadata.has("parseStatus")) {
+                metadata.addProperty("parseStatus", PARSE_FAILED.status());
+            }
+            // 最终写库事务已经回滚，再用独立短事务登记失败。
+            saveFailure(msg, metadata, "文档处理失败，请重试");
+            throw new ServiceException("文档处理失败，等待消息队列重试");
         }
-        return toRespDTO(document);
     }
 
-    private KnowledgeDocumentRespDTO markFailed(KnowledgeDocumentDO document, JsonObject metadata,
-                                                 String parseStatus, Exception cause, String fallbackMessage) {
-        log.warn("文档导入失败，docId={}", document.getId(), cause);
-        // 业务异常的提示可返回；数据库、文件系统等内部异常只记录日志。
-        String message = fallbackMessage;
-        if ((cause instanceof ClientException || cause instanceof ServiceException)
-                && cause.getMessage() != null && !cause.getMessage().isBlank()) {
-            message = cause.getMessage();
+    /** 与删除知识库锁同一行，防止删除后又写入片段。只能在事务中调用。 */
+    private KnowledgeDocumentDO lockDocument(Long kbId, Long docId) {
+        if (baseMapper.selectActiveForUpdate(kbId) == null) {
+            throw new ClientException("知识库不存在或已被删除");
         }
-        metadata.addProperty("parseStatus", parseStatus);
-        metadata.addProperty("chunkCount", 0);
-        metadata.addProperty("errorMessage", message);
-        // 回滚不会恢复 Java 对象，显式覆盖可能留下的 success 状态和片段数量。
-        document.setStatus(FILE_FAILED.status())
-                .setMetadata(metadata.toString()).setUpdateTime(null);
-        transactionTemplate.execute(status -> {
-            if (documentMapper.updateById(document) != 1) {
-                // 删除知识库已标记文档删除时，不把它重新恢复成有效文档。
-                throw new ClientException("文档不存在或已被删除");
+        return requireDocument(kbId, docId);
+    }
+
+    private void saveFailure(DocumentMsg msg, JsonObject metadata, String errorMessage) {
+        transactionTemplate.executeWithoutResult(status -> {
+            // 处理过程中可能删除知识库：已删除的文档不再更新。
+            if (baseMapper.selectActiveForUpdate(msg.getKbId()) == null) {
+                return;
             }
-            return null;
+            KnowledgeDocumentDO current = documentMapper.selectById(msg.getDocId());
+            if (current == null || !Objects.equals(msg.getKbId(), current.getKbId())) {
+                return;
+            }
+            metadata.addProperty("chunkCount", 0);
+            metadata.addProperty("errorMessage", errorMessage);
+            updateDocument(current.setStatus(FILE_FAILED.status()), metadata);
         });
-        return toRespDTO(document);
+    }
+
+    private void updateDocument(KnowledgeDocumentDO document, JsonObject metadata) {
+        document.setMetadata(metadata.toString()).setUpdateTime(null);
+        if (documentMapper.updateById(document) != 1) {
+            throw new ServiceException("更新文档状态失败");
+        }
+    }
+
+    private JsonObject readMetadata(KnowledgeDocumentDO document) {
+        return document.getMetadata() == null ? new JsonObject()
+                : gson.fromJson(document.getMetadata(), JsonObject.class);
     }
 
     @Override
@@ -180,29 +255,14 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
                 .setKbId(document.getKbId()).setDocName(document.getDocName()).setStatus(document.getStatus())
                 .setCreateTime(document.getCreateTime()).setUpdateTime(document.getUpdateTime());
         if (document.getMetadata() != null) {
-            try {
-                DocumentMetadata metadata = gson.fromJson(document.getMetadata(), DocumentMetadata.class);
-                if (metadata != null) {
-                    response.setParseStatus(metadata.parseStatus)
-                            .setTextLength(metadata.textLength)
-                            .setChunkCount(metadata.chunkCount)
-                            .setErrorMessage(metadata.errorMessage);
-                }
-            } catch (JsonParseException e) {
-                throw new ServiceException("文档元数据格式错误");
+            DocumentMetadataDTO metadata = gson.fromJson(document.getMetadata(), DocumentMetadataDTO.class);
+            if (metadata != null) {
+                response.setParseStatus(metadata.getParseStatus())
+                        .setTextLength(metadata.getTextLength())
+                        .setChunkCount(metadata.getChunkCount())
+                        .setErrorMessage(metadata.getErrorMessage());
             }
         }
         return response;
     }
-
-    /**
-     * 只接收响应需要的元数据字段，其它字段由 Gson 自动忽略。
-     */
-    private static class DocumentMetadata {
-        private String parseStatus;
-        private Integer textLength;
-        private Integer chunkCount;
-        private String errorMessage;
-    }
-
 }

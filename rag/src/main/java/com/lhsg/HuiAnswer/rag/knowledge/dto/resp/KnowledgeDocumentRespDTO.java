@@ -14,7 +14,7 @@ public class KnowledgeDocumentRespDTO {
 
     private String docName;
 
-    /** pending 处理中；failed 导入失败；success 全部片段已入库。 */
+    /** pending 排队中；running 处理中；failed 导入失败；success 全部片段已入库。 */
     private String status;
 
     private String parseStatus;

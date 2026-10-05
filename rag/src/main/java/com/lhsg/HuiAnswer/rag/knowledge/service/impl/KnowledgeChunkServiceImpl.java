@@ -62,8 +62,7 @@ public class KnowledgeChunkServiceImpl implements IKnowledgeChunkService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void saveChunks(List<String> chunks, Long kbId, Long docId) {
+    public List<KnowledgeChunkDO> prepareChunks(List<String> chunks, Long kbId, Long docId) {
         List<float[]> embeddingList = embeddingChunks.doEmbedding(chunks);
         if (embeddingList == null || embeddingList.size() != chunks.size()) {
             throw new ServiceException("返回的向量数量与片段数量不一致");
@@ -75,6 +74,12 @@ public class KnowledgeChunkServiceImpl implements IKnowledgeChunkService {
                     .setKbId(kbId).setDocId(docId);
             records.add(chunk);
         }
+        return records;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void saveChunks(List<KnowledgeChunkDO> records) {
         chunkMapper.insert(records, INSERT_BATCH_SIZE);
     }
 }

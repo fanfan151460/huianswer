@@ -15,6 +15,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import org.springframework.web.multipart.MultipartFile;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Map;
+
 import static com.lhsg.HuiAnswer.framework.constant.Constant.NODUPLICATE_SUBMIT;
 import static com.lhsg.HuiAnswer.framework.constant.Constant.USER_HEADER;
 
@@ -72,6 +77,19 @@ public class NoDuplicateAspect {
      * @return joinPoint md5
      */
     private String calcArgsMD5(ProceedingJoinPoint joinPoint) {
-        return DigestUtil.md5Hex(JSON.toJSONBytes(joinPoint.getArgs()));
+        Object[] args = joinPoint.getArgs().clone();
+        for (int i = 0; i < args.length; i++) {
+            if (args[i] instanceof MultipartFile file) {
+                // MultipartFile 不能直接 JSON 序列化：它的 Resource.getURL() 会抛异常。
+                // 用文件属性和内容摘要参与判重，不把 InputStream/Resource 放进 JSON。
+                try (InputStream input = file.getInputStream()) {
+                    args[i] = Map.of("filename", String.valueOf(file.getOriginalFilename()),
+                            "size", file.getSize(), "md5", DigestUtil.md5Hex(input));
+                } catch (IOException e) {
+                    throw new ClientException("读取上传文件失败");
+                }
+            }
+        }
+        return DigestUtil.md5Hex(JSON.toJSONBytes(args));
     }
 }

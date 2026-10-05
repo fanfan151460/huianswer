@@ -24,6 +24,18 @@ public class KnowledgeDocumentController {
         return Results.success(knowledgeDocumentService.uploadDocument(kbId, file));
     }
 
+    @GetMapping("/{docId}")
+    public Result<KnowledgeDocumentRespDTO> get(@PathVariable("kbId") Long kbId,
+                                                @PathVariable("docId") Long docId) {
+        return Results.success(knowledgeDocumentService.getDocument(kbId, docId));
+    }
+
+    @PostMapping("/{docId}/retry")
+    public Result<KnowledgeDocumentRespDTO> retry(@PathVariable("kbId") Long kbId,
+                                                  @PathVariable("docId") Long docId) {
+        return Results.success(knowledgeDocumentService.retryDocument(kbId, docId));
+    }
+
     @GetMapping
     public Result<List<KnowledgeDocumentRespDTO>> list(@PathVariable("kbId") Long kbId) {
         return Results.success(knowledgeDocumentService.listDocument(kbId));

@@ -78,8 +78,8 @@ curl.exe -F "file=@D:/学习资料/员工制度.md" http://localhost:8080/api/kn
 ### 存储、解析与状态
 
 - 支持 UTF-8 TXT、Markdown，以及带文字的 PDF；单文件最多 10MB。当前没有 OCR，不承诺保留复杂表格或版面。
-- 原文件默认存于 D:/develop/huianswer-data/documents/{kbId}/{UUID}.扩展名；展示名保存在 doc_name 中。同名上传不覆盖。
-- 可用 HUIANSWER_STORAGE_DIR 调整原文件目录；上传临时目录默认 D:/develop/huianswer-data/tmp，可用 HUIANSWER_UPLOAD_TEMP_DIR 调整。
+- 原文件默认存于 D:/develop/huiAnswer/data/documents/{kbId}/{UUID}.扩展名；展示名保存在 doc_name 中。同名上传不覆盖。
+- 可用 HUIANSWER_STORAGE_DIR 调整原文件目录；上传临时目录默认 D:/develop/huiAnswer/data/tmp，可用 HUIANSWER_UPLOAD_TEMP_DIR 调整。
 - Tika 解析器返回完整文本；接口最多返回 2000 字符 textPreview，textLength 是完整解析文本长度，previewTruncated 表示仅预览被截断。
 - 解析最多允许 100 万字符，超过则失败，不把截断内容当成完整文档。
 - 正常结果 status=pending、parseStatus=parsed：已解析，等待后续切分/向量化。只有完整导入完成才使用 success。
@@ -100,7 +100,7 @@ LocalDocumentStorage.save/open -> TikaDocumentParser.parse -> documentMapper。
 
 本课测试：真实 PostgreSQL + Spring MVC + Tika 验证归属、中文预览、列表隔离、失败记录及上传参数；
 实际生成的 PDF 验证文本提取、空白 PDF 拒绝与字符上限。另用独立临时应用完成真实 HTTP multipart/磁盘存储验收。
-集成测试使用内存文件存储及数据库回滚；HTTP 验收只清理本次数据库记录，原文件保留在 D:/develop/huianswer-data/verification。
+集成测试使用内存文件存储及数据库回滚；HTTP 验收只清理本次数据库记录，原文件保留在 D:/develop/huiAnswer/data/verification。
 
 Tika 参考：https://tika.apache.org/3.2.3/gettingstarted.html 、https://tika.apache.org/3.2.3/examples.html
 
@@ -157,7 +157,7 @@ Gson 2.13.1 的版本已由父 POM 管理，rag 子模块只声明依赖。参�
 切换 OkHttp 后，完整 Maven verify 55/55 通过，无跳过；用相同两条合成文本验证真实接口，仍返回两个 4096 维向量。
 切换 Gson 后，在独立源码副本中 Maven verify 仍是 55/55 通过，无跳过；本地 HTTP 用例验证中文、引号、反斜杠与换行的序列化，以及响应对象解析和 index 配对。
 没有批量向量化用户文件，没有新增业务记录或重启用户正在运行的应用。
-上传接口仍返回 pending + parsed + chunkCount。下一步接通完整导入：登记文档 -> 向量化 -> 写片段 -> 更新成功/失败状态。
+上传接口现已改为 MQ 异步导入：登记文档并返回 ID，后台解析、向量化、写片段；通过单文档查询接口读取最终状态。
 
 参考：https://api-docs.siliconflow.cn/docs/api/embeddings-post 、https://github.com/square/okhttp/blob/parent-4.12.0/okhttp/src/main/kotlin/okhttp3/Call.kt
 
@@ -232,3 +232,9 @@ mvn -B -ntp "-Dmaven.repo.local=D:/develop/repo" -pl rag -am verify
 ```
 
 未提供 HUIANSWER_DB_PASSWORD 时，这组真实数据库测试会跳过。执行前需要 Docker 中数据库和表已初始化。
+
+## 第 06 课：RocketMQ 异步文档导入
+
+文档上传不再同步等待模型。按 shortlink 的写法发送自定义消息对象，消费者在事务外解析、分块和向量化，最后通过短事务保存片段和成功状态。消费幂等留到后续学习时实现。
+
+阅读流程、消息实体、本地启动与当前边界见 [文档异步导入](docs/document-ingestion-mq.md)。新数据库使用 `sql/01_knowledge.sql`；已有数据库本次不需要迁移。

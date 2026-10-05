@@ -1,0 +1,41 @@
+# 复用本机已存在镜像的固定 digest；可用 HUIANSWER_MQ_IMAGE 替换。
+services:
+  namesrv:
+    image: ${HUIANSWER_MQ_IMAGE:-apache/rocketmq@sha256:7e8f6c9dbd9df742ed26ba69c00d4ad69e2f86a56f3ca7782ff8144dd0798132}
+    container_name: huianswer-mq-namesrv
+    user: "0:0"
+    command: sh mqnamesrv
+    environment:
+      JAVA_OPT_EXT: "-Xms128m -Xmx128m -Xmn64m"
+    ports:
+      - "127.0.0.1:9876:9876"
+    volumes:
+      - "${HUIANSWER_MQ_DATA_DIR:-D:/develop/huiAnswer/data/rocketmq}/namesrv-logs:/home/rocketmq/logs"
+    restart: unless-stopped
+  broker:
+    image: ${HUIANSWER_MQ_IMAGE:-apache/rocketmq@sha256:7e8f6c9dbd9df742ed26ba69c00d4ad69e2f86a56f3ca7782ff8144dd0798132}
+    container_name: huianswer-mq-broker
+    user: "0:0"
+    command: sh mqbroker -c /home/rocketmq/broker.conf
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m -XX:MaxDirectMemorySize=128m"
+    depends_on:
+      - namesrv
+    ports:
+      - "127.0.0.1:10911:10911"
+      - "127.0.0.1:10909:10909"
+    volumes:
+      - "./broker.conf:/home/rocketmq/broker.conf:ro"
+      - "${HUIANSWER_MQ_DATA_DIR:-D:/develop/huiAnswer/data/rocketmq}/broker-logs:/home/rocketmq/logs"
+      - "${HUIANSWER_MQ_DATA_DIR:-D:/develop/huiAnswer/data/rocketmq}/store:/home/rocketmq/store"
+    restart: unless-stopped
+  # 当前上传的防重复提交切面使用 Redis；与 MQ 一起提供本地运行依赖。
+  redis:
+    image: redis:7.2.5-alpine
+    container_name: huianswer-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - "${HUIANSWER_REDIS_DATA_DIR:-D:/develop/huiAnswer/data/redis}:/data"
+    restart: unless-stopped

@@ -9,7 +9,7 @@ spring:
       max-file-size: 10MB
       max-request-size: 11MB
       # 上传临时文件也放到 D 盘。Spring Boot 启动时会创建该目录。
-      location: ${HUIANSWER_UPLOAD_TEMP_DIR:D:/develop/huianswer-data/tmp}
+      location: ${HUIANSWER_UPLOAD_TEMP_DIR:D:/develop/huiAnswer/data/tmp}
   datasource:
     driver-class-name: org.postgresql.Driver
     url: ${HUIANSWER_DB_URL:jdbc:postgresql://localhost:5432/huianswer?reWriteBatchedInserts=true}
@@ -20,9 +20,22 @@ mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
 
+rocketmq:
+  name-server: ${HUIANSWER_MQ_NAMESERVER:127.0.0.1:9876}
+  producer:
+    group: ${HUIANSWER_MQ_PRODUCER_GROUP:huiAnswer-rag-document-service}
+    topic: ${HUIANSWER_MQ_TOPIC:huiAnswer-rag-documentToChunk-topic}
+    send-message-timeout: 5000
+    retry-times-when-send-failed: 1
+    retry-times-when-send-async-failed: 1
+  consumer:
+    group: ${HUIANSWER_MQ_CONSUMER_GROUP:huiAnswer-rag-chunks-service}
+
 rag:
+  ingestion:
+    mq-enabled: true
   storage:
-    local-root: ${HUIANSWER_STORAGE_DIR:D:/develop/huianswer-data/documents}
+    local-root: ${HUIANSWER_STORAGE_DIR:D:/develop/huiAnswer/data/documents}
   parse:
     max-characters: 1000000
   vector:

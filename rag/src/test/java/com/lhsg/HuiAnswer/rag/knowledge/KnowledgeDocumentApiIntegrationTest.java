@@ -55,11 +55,17 @@ class KnowledgeDocumentApiIntegrationTest {
     @Autowired private PlatformTransactionManager transactionManager;
     @MockitoBean private LocalDocumentStorage storage;
     @MockitoBean private EmbeddingChunks embedding;
+    @MockitoBean private com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer producer;
+    @MockitoBean private org.springframework.data.redis.core.StringRedisTemplate redis;
+    @Autowired private com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeDocumentService service;
     private final Map<String, byte[]> files = new HashMap<>();
 
     @BeforeEach
     void mockFiles() throws Exception {
         files.clear();
+        var operations = mock(org.springframework.data.redis.core.ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(operations);
+        when(operations.setIfAbsent(anyString(), anyString(), anyLong(), any(java.util.concurrent.TimeUnit.class))).thenReturn(true);
         when(embedding.doEmbedding(anyList())).thenAnswer(call ->
                 call.<java.util.List<String>>getArgument(0).stream().map(text -> new float[4096]).toList());
         when(storage.save(anyLong(), any(MultipartFile.class), anyString())).thenAnswer(call -> {
@@ -198,7 +204,15 @@ class KnowledgeDocumentApiIntegrationTest {
         MvcResult result = mvc.perform(multipart(url(kbId))
                         .file(new MockMultipartFile("file", name, "application/octet-stream", bytes)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.code").value("0")).andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsByteArray()).path("data");
+        JsonNode accepted = objectMapper.readTree(result.getResponse().getContentAsByteArray()).path("data");
+        assertEquals("pending", accepted.path("status").asText());
+        long docId = accepted.path("id").asLong();
+        var msg = new com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg().setKbId(kbId).setDocId(docId);
+        try { service.consumeDocument(msg); }
+        catch (com.lhsg.HuiAnswer.framework.exception.ServiceException expectedRetry) { }
+        MvcResult current = mvc.perform(get(url(kbId) + "/" + docId))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value("0")).andReturn();
+        return objectMapper.readTree(current.getResponse().getContentAsByteArray()).path("data");
     }
 
     private String url(long kbId) {

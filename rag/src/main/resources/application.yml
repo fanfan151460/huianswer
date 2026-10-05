@@ -26,7 +26,9 @@ rocketmq:
     group: ${HUIANSWER_MQ_PRODUCER_GROUP:huiAnswer-rag-document-service}
     topic: ${HUIANSWER_MQ_TOPIC:huiAnswer-rag-documentToChunk-topic}
     send-message-timeout: 5000
-    retry-times-when-send-failed: 1
+    # 同步发送由 DocumentProducer 统一退避重试，避免与客户端重试叠加。
+    retry-times-when-send-failed: 0
+    retry-initial-delay-ms: 200
     retry-times-when-send-async-failed: 1
   consumer:
     group: ${HUIANSWER_MQ_CONSUMER_GROUP:huiAnswer-rag-chunks-service}

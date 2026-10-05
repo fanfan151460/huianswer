@@ -1,28 +1,37 @@
 package com.lhsg.HuiAnswer.rag.knowledge;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeBaseDO;
+import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
+import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.documentUtil.storage.LocalDocumentStorage;
+import com.lhsg.HuiAnswer.rag.knowledge.embeddingUtil.EmbeddingChunks;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.IntStream;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -31,7 +40,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/** 真实数据库和 Tika；文件存储替换为内存，测试不删除任何磁盘文件。 */
+/** 真实数据库和 Tika；原文件和模型用内存替代，不调用收费 API 或删除磁盘文件。 */
 @SpringBootTest
 @AutoConfigureMockMvc
 @EnabledIfEnvironmentVariable(named = "HUIANSWER_DB_PASSWORD", matches = ".+")
@@ -41,12 +50,18 @@ class KnowledgeDocumentApiIntegrationTest {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private KnowledgeBaseMapper baseMapper;
     @Autowired private KnowledgeDocumentMapper documentMapper;
+    @Autowired private KnowledgeChunkMapper chunkMapper;
+    @Autowired private JdbcTemplate jdbc;
+    @Autowired private PlatformTransactionManager transactionManager;
     @MockitoBean private LocalDocumentStorage storage;
+    @MockitoBean private EmbeddingChunks embedding;
     private final Map<String, byte[]> files = new HashMap<>();
 
     @BeforeEach
     void mockFiles() throws Exception {
         files.clear();
+        when(embedding.doEmbedding(anyList())).thenAnswer(call ->
+                call.<java.util.List<String>>getArgument(0).stream().map(text -> new float[4096]).toList());
         when(storage.save(anyLong(), any(MultipartFile.class), anyString())).thenAnswer(call -> {
             MultipartFile file = call.getArgument(1);
             String path = "memory/" + UUID.randomUUID();
@@ -57,17 +72,19 @@ class KnowledgeDocumentApiIntegrationTest {
     }
 
     @Test
-    void shouldParseChineseMarkdownAndPersistBelongingWithoutCreatingChunks() throws Exception {
+    void shouldParseChineseMarkdownAndPersistMatchingChunks() throws Exception {
         long kbId = createBase("文档导入测试");
         String text = "# 员工制度\n\n年假需要提前三天申请。";
         JsonNode data = upload(kbId, "../员工制度.md", text.getBytes(StandardCharsets.UTF_8));
         assertEquals("员工制度.md", data.path("docName").asText());
         assertEquals(kbId, data.path("kbId").asLong());
-        assertEquals("pending", data.path("status").asText());
-        assertEquals("parsed", data.path("parseStatus").asText());
+        assertEquals("success", data.path("status").asText());
+        assertEquals("success", data.path("parseStatus").asText());
         assertEquals(1, data.path("chunkCount").asInt());
-        assertEquals(text, data.path("textPreview").asText());
-        assertFalse(data.path("previewTruncated").asBoolean());
+        var rows = chunkMapper.selectList(Wrappers.<KnowledgeChunkDO>lambdaQuery()
+                .eq(KnowledgeChunkDO::getDocId, data.path("id").asLong()));
+        assertEquals(1, rows.size());
+        assertEquals(text, rows.get(0).getContent());
         assertFalse(data.has("filePath"));
         var document = documentMapper.selectById(data.path("id").asLong());
         assertEquals(kbId, document.getKbId());
@@ -76,14 +93,16 @@ class KnowledgeDocumentApiIntegrationTest {
     }
 
     @Test
-    void shouldLimitPreviewButKeepFullParsedLengthAndSeparateSameNamedUploads() throws Exception {
+    void shouldKeepFullParsedLengthAndSeparateSameNamedUploads() throws Exception {
         long kbId = createBase("长文本库");
         String text = "a".repeat(1999) + "😀" + "后续内容".repeat(50);
         JsonNode first = upload(kbId, "sample.txt", text.getBytes(StandardCharsets.UTF_8));
         JsonNode second = upload(kbId, "sample.txt", "另一份原文".getBytes(StandardCharsets.UTF_8));
         assertEquals(text.length(), first.path("textLength").asInt());
-        assertEquals("a".repeat(1999), first.path("textPreview").asText());
-        assertTrue(first.path("previewTruncated").asBoolean());
+        var rows = chunkMapper.selectList(Wrappers.<KnowledgeChunkDO>lambdaQuery()
+                .eq(KnowledgeChunkDO::getDocId, first.path("id").asLong()));
+        assertEquals(6, rows.size());
+        assertTrue(rows.stream().anyMatch(chunk -> chunk.getContent().contains("😀")));
         assertEquals(6, first.path("chunkCount").asInt());
         var firstDoc = documentMapper.selectById(first.path("id").asLong());
         var secondDoc = documentMapper.selectById(second.path("id").asLong());
@@ -137,6 +156,36 @@ class KnowledgeDocumentApiIntegrationTest {
         mvc.perform(get(url(first))).andExpect(jsonPath("$.data.length()").value(0));
         mvc.perform(delete("/api/knowledge-base/" + second)).andExpect(jsonPath("$.code").value("0"));
         mvc.perform(get(url(second))).andExpect(jsonPath("$.code").value("A000001"));
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void shouldRollbackChunkBatchesAndKeepFailedDocument() throws Exception {
+        long kbId = createBase("导入回滚测试专用库");
+        try {
+            // 共 101 块；最后一块给错维度，验证第二批失败会回滚已 flush 的第一批。
+            when(embedding.doEmbedding(anyList())).thenAnswer(call -> {
+                int count = call.<java.util.List<String>>getArgument(0).size();
+                return IntStream.range(0, count)
+                        .mapToObj(i -> new float[i == count - 1 ? 1 : 4096]).toList();
+            });
+            JsonNode data = upload(kbId, "rollback.txt", "a".repeat(40500).getBytes(StandardCharsets.UTF_8));
+            assertEquals("failed", data.path("status").asText());
+            assertEquals("parsed", data.path("parseStatus").asText());
+            assertEquals(0, data.path("chunkCount").asInt());
+            assertFalse(data.path("errorMessage").asText().isBlank());
+            long docId = data.path("id").asLong();
+            assertEquals("failed", documentMapper.selectById(docId).getStatus());
+            assertEquals(0L, chunkMapper.selectCount(Wrappers.<KnowledgeChunkDO>lambdaQuery()
+                    .eq(KnowledgeChunkDO::getDocId, docId)));
+        } finally {
+            // 只清理本测试自己提交的记录；文件存储是内存，不操作磁盘文件。
+            new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                jdbc.update("DELETE FROM t_knowledge_chunk WHERE kb_id = ?", kbId);
+                jdbc.update("DELETE FROM t_knowledge_document WHERE kb_id = ?", kbId);
+                jdbc.update("DELETE FROM t_knowledge_base WHERE id = ?", kbId);
+            });
+        }
     }
 
     private long createBase(String name) {

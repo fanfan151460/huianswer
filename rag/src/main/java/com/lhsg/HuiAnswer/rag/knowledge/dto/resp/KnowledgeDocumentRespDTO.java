@@ -14,20 +14,15 @@ public class KnowledgeDocumentRespDTO {
 
     private String docName;
 
-    /** pending 等待切分/向量化；failed 解析失败；success 留给整条导入链路完成。 */
+    /** pending 处理中；failed 导入失败；success 全部片段已入库。 */
     private String status;
 
     private String parseStatus;
 
     private Integer textLength;
 
-    /** 已切出的有效片段数量；当前仍等待向量化，不代表已经入库。 */
+    /** 已成功入库的片段数量；导入失败时为 0。 */
     private Integer chunkCount;
-
-    /** 上传响应返回预览；列表不返回正文，不暴露磁盘路径。 */
-    private String textPreview;
-
-    private Boolean previewTruncated;
 
     private String errorMessage;
 

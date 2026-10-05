@@ -88,7 +88,7 @@ curl.exe -F "file=@D:/学习资料/员工制度.md" http://localhost:8080/api/kn
 - 文档列表不返回正文或磁盘路径。JSON 元数据只保存格式、文件大小、解析阶段和文字数量；当前不单独保存完整解析文本，后续切分从原文件重新读取。
 
 阅读顺序：KnowledgeDocumentController -> KnowledgeDocumentServiceImpl.uploadDocument ->
-LocalDocumentStorage.save/open -> TikaDocumentParser.parse -> KnowledgeDocumentMapper。
+LocalDocumentStorage.save/open -> TikaDocumentParser.parse -> documentMapper。
 @RequestPart("file") 绑定上传的文件；kbId 来自路径，用于关联文档和约束知识库范围。
 
 ### 当前取舍

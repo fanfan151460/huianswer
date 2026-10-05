@@ -23,7 +23,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class KnowledgeBaseServiceImpl implements IKnowledgeBaseService {
     private final KnowledgeBaseMapper knowledgeBaseMapper;
-    private final KnowledgeDocumentMapper knowledgeDocumentMapper;
+    private final KnowledgeDocumentMapper documentMapper;
     private final KnowledgeChunkMapper knowledgeChunkMapper;
 
     @Override
@@ -76,7 +76,7 @@ public class KnowledgeBaseServiceImpl implements IKnowledgeBaseService {
         // 1. 物理清理片段：同一行保存原文和向量，删除时一起清理。
         knowledgeChunkMapper.deletePhysicallyByKbId(id);
         // 2. 保留文档记录，标记为删除。
-        knowledgeDocumentMapper.markDeletedByKbId(id, LocalDateTime.now());
+        documentMapper.markDeletedByKbId(id, LocalDateTime.now());
         // 3. 删除知识库。任一步抛异常，上面的操作都由事务回滚。
         if (knowledgeBaseMapper.deleteById(id) != 1) {
             throw new ClientException("知识库不存在或已被删除");

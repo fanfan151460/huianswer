@@ -1,7 +1,8 @@
 package com.lhsg.HuiAnswer.rag.knowledge.mq.consumer;
 
+import com.lhsg.HuiAnswer.framework.base.MsgWrapper;
+import com.lhsg.HuiAnswer.framework.duplicate.Idempotent;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg;
-import com.lhsg.HuiAnswer.rag.knowledge.mq.base.MsgWrapper;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeDocumentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +22,7 @@ public class DocumentConsumer implements RocketMQListener<MsgWrapper<DocumentMsg
     private final IKnowledgeDocumentService documentService;
 
     @Override
+    @Idempotent
     public void onMessage(MsgWrapper<DocumentMsg> message) {
         log.info("收到文档消息，docId={}，keys={}", message.getMsg().getDocId(), message.getKeys());
         // 转换由 RocketMQ Spring 完成；业务异常继续抛出，MQ 才会安排重试。

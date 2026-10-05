@@ -1,8 +1,8 @@
 package com.lhsg.HuiAnswer.rag.knowledge.mq.producer;
 
+import com.lhsg.HuiAnswer.framework.base.MsgWrapper;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg;
-import com.lhsg.HuiAnswer.rag.knowledge.mq.base.MsgWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.client.producer.SendResult;

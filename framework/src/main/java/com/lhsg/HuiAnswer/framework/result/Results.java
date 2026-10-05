@@ -1,7 +1,7 @@
 package com.lhsg.HuiAnswer.framework.result;
 
 
-import com.lhsg.HuiAnswer.framework.errorcode.BaseErrorCode;
+import com.lhsg.HuiAnswer.framework.result.errorcode.BaseErrorCode;
 import com.lhsg.HuiAnswer.framework.exception.AbstractException;
 
 import java.util.Optional;

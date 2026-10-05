@@ -1,7 +1,7 @@
 package com.lhsg.HuiAnswer.framework.exception;
 
 import cn.hutool.core.util.StrUtil;
-import com.lhsg.HuiAnswer.framework.errorcode.IErrorCode;
+import com.lhsg.HuiAnswer.framework.result.errorcode.IErrorCode;
 import lombok.Getter;
 
 import java.util.Optional;

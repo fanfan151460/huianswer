@@ -1,8 +1,8 @@
 package com.lhsg.HuiAnswer.framework.exception;
 
 
-import com.lhsg.HuiAnswer.framework.errorcode.BaseErrorCode;
-import com.lhsg.HuiAnswer.framework.errorcode.IErrorCode;
+import com.lhsg.HuiAnswer.framework.result.errorcode.BaseErrorCode;
+import com.lhsg.HuiAnswer.framework.result.errorcode.IErrorCode;
 
 public class ClientException extends AbstractException {
 

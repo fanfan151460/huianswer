@@ -1,8 +1,8 @@
 package com.lhsg.HuiAnswer.rag.knowledge;
 
+import com.lhsg.HuiAnswer.framework.base.MsgWrapper;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg;
-import com.lhsg.HuiAnswer.rag.knowledge.mq.base.MsgWrapper;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.consumer.DocumentConsumer;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeDocumentService;
@@ -14,7 +14,8 @@ import org.springframework.messaging.Message;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class DocumentMqTest {

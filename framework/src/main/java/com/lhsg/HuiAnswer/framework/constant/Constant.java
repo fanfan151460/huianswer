@@ -5,4 +5,5 @@ public class Constant {
 
     public static final String USER_HEADER = "username";
 
+    public static final String HUI_ANSWER_IDEMPOTENT = "huiAnswer:Idempotent:%s";
 }

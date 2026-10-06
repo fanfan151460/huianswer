@@ -12,6 +12,9 @@ public class KnowledgeDocumentRespDTO {
 
     private Long kbId;
 
+    /** 上传者的管理员 ID */
+    private Long createdBy;
+
     private String docName;
 
     /** pending 排队中；running 处理中；failed 导入失败；success 全部片段已入库。 */

@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
+import com.lhsg.HuiAnswer.rag.admin.user.UsersContext;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeBaseDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
@@ -28,9 +29,9 @@ public class KnowledgeBaseServiceImpl implements IKnowledgeBaseService {
 
     @Override
     public KnowledgeBaseRespDTO createBase(CreateBaseReqDTO createBaseReqDTO) {
-        // TODO 用户鉴权：当前学习阶段尚未接入用户身份。
+        Long createdBy = UsersContext.requireUserId();
         String name = validateName(createBaseReqDTO == null ? null : createBaseReqDTO.getName());
-        KnowledgeBaseDO knowledgeBaseDO = new KnowledgeBaseDO().setName(name);
+        KnowledgeBaseDO knowledgeBaseDO = new KnowledgeBaseDO().setName(name).setCreatedBy(createdBy);
         if (knowledgeBaseMapper.insert(knowledgeBaseDO) != 1) {
             throw new ServiceException("创建知识库失败");
         }
@@ -108,7 +109,8 @@ public class KnowledgeBaseServiceImpl implements IKnowledgeBaseService {
 
     private KnowledgeBaseRespDTO toRespDTO(KnowledgeBaseDO knowledgeBaseDO) {
         return new KnowledgeBaseRespDTO().setId(knowledgeBaseDO.getId())
-                .setName(knowledgeBaseDO.getName()).setCreateTime(knowledgeBaseDO.getCreateTime())
+                .setName(knowledgeBaseDO.getName()).setCreatedBy(knowledgeBaseDO.getCreatedBy())
+                .setCreateTime(knowledgeBaseDO.getCreateTime())
                 .setUpdateTime(knowledgeBaseDO.getUpdateTime());
     }
 }

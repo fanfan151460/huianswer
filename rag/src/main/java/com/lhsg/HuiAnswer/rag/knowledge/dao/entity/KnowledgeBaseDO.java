@@ -16,6 +16,10 @@ public class KnowledgeBaseDO {
     /** 知识库名称 */
     private String name;
 
+    /** 创建者的管理员 ID；历史未记录的数据为空，更新时不修改 */
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private Long createdBy;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

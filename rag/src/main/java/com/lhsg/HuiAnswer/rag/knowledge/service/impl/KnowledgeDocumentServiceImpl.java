@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.lhsg.HuiAnswer.framework.duplicate.NoDuplicateSubmit;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
+import com.lhsg.HuiAnswer.rag.admin.user.UsersContext;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeDocumentDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeBaseMapper;
@@ -53,6 +54,7 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
     @Override
     @NoDuplicateSubmit
     public KnowledgeDocumentRespDTO uploadDocument(Long kbId, MultipartFile file) {
+        Long createdBy = UsersContext.requireUserId();
         validateKbId(kbId);
         String name = validateFile(file);
         // 先拒绝不存在或已删除的知识库，避免无效请求也保存原文件。
@@ -65,7 +67,7 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
         JsonObject metadata = new JsonObject();
         metadata.addProperty("fileSize", file.getSize());
         metadata.addProperty("extension", extension);
-        KnowledgeDocumentDO document = new KnowledgeDocumentDO().setKbId(kbId)
+        KnowledgeDocumentDO document = new KnowledgeDocumentDO().setKbId(kbId).setCreatedBy(createdBy)
                 .setDocName(name).setFilePath(path).setStatus(FILE_PENDING.status())
                 .setMetadata(metadata.toString());
 
@@ -172,7 +174,9 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
         }
     }
 
-    /** 与删除知识库锁同一行，防止删除后又写入片段。只能在事务中调用。 */
+    /** 与删除知识库锁同一行，防止删除后又写入片段。只能在事务中调用。
+     * TODO 使用分布式锁优化，直观显示修改冲突
+     */
     private KnowledgeDocumentDO lockDocument(Long kbId, Long docId) {
         if (baseMapper.selectActiveForUpdate(kbId) == null) {
             throw new ClientException("知识库不存在或已被删除");
@@ -252,7 +256,8 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
 
     private KnowledgeDocumentRespDTO toRespDTO(KnowledgeDocumentDO document) {
         KnowledgeDocumentRespDTO response = new KnowledgeDocumentRespDTO().setId(document.getId())
-                .setKbId(document.getKbId()).setDocName(document.getDocName()).setStatus(document.getStatus())
+                .setKbId(document.getKbId()).setCreatedBy(document.getCreatedBy())
+                .setDocName(document.getDocName()).setStatus(document.getStatus())
                 .setCreateTime(document.getCreateTime()).setUpdateTime(document.getUpdateTime());
         if (document.getMetadata() != null) {
             DocumentMetadataDTO metadata = gson.fromJson(document.getMetadata(), DocumentMetadataDTO.class);

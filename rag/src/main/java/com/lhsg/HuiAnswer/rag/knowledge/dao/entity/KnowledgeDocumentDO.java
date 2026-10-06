@@ -17,6 +17,10 @@ public class KnowledgeDocumentDO {
     /** 所属知识库 */
     private Long kbId;
 
+    /** 上传者的管理员 ID，在上传请求中记录，MQ 消费时保持不变 */
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private Long createdBy;
+
     /** 文件名 */
     private String docName;
 

@@ -16,5 +16,6 @@ public class References {
     /** 片段id */
     private long chunkId;
 
-    // 近似度
+    /** 余弦距离，越小表示向量越相似。 */
+    private Double distance;
 }

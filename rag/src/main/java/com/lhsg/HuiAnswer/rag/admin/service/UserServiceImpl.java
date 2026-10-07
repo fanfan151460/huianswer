@@ -31,7 +31,7 @@ import static com.lhsg.HuiAnswer.rag.constant.constant.HUI_ANSWER_LOGIN_USER;
 public class UserServiceImpl implements IUserService {
 
     /** 登录态有效期：1 小时 */
-    private static final long LOGIN_TTL_SECONDS = TimeUnit.HOURS.toSeconds(1);
+    private static final long LOGIN_TTL_SECONDS = TimeUnit.DAYS.toSeconds(30);
 
     /** 脚本返回值：本次登录挤掉了该账号原有的会话 */
     private static final long LOGIN_KICKED_PREVIOUS = 1L;

@@ -49,6 +49,7 @@ rag:
     dimension: 4096
     metric-type: COSINE
   topK: 5
+  max-distance: 0.6
   ai:
     provider: siliconflow
     siliconflow:

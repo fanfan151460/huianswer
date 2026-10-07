@@ -133,7 +133,6 @@ public class ChatServiceImpl implements IChatService {
         if (!finishReason.equals("stop")) {
             throw new ServiceException("模型回答异常终止");
         }
-        // 后续可能使用
         return new LLMChatResp().setAnswer(answer).setModel(model)
                 .setFinishReason(finishReason).setTokens(tokens).setNeedChunks(needChunks);
     }

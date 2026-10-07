@@ -21,13 +21,14 @@ public interface KnowledgeChunkMapper extends BaseMapper<KnowledgeChunkDO> {
     int deletePhysicallyByKbId(@Param("kbId") Long kbId);
 
     @Select("""
-    SELECT d.doc_name AS docName, c.content AS content, c.id AS chunkId, c.doc_id
+    SELECT d.doc_name AS docName, c.content AS content, c.id AS chunkId, c.doc_id,
+           c.embedding <=> #{embedding, typeHandler=com.lhsg.HuiAnswer.rag.knowledge.handler.PgVectorTypeHandler} AS distance
     FROM t_knowledge_chunk c
     JOIN t_knowledge_document d ON d.id = c.doc_id
     WHERE c.kb_id = #{kbId}
     AND c.deleted = 0
     AND d.deleted = 0
-    ORDER BY c.embedding <=> #{embedding, typeHandler=com.lhsg.HuiAnswer.rag.knowledge.dao.handler.PgVectorTypeHandler}
+    ORDER BY distance ASC
     LIMIT #{topK}
         """)
 List<References> search(@Param("kbId") Long kbId,

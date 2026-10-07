@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.knowledge.dao.handler;
+package com.lhsg.HuiAnswer.rag.knowledge.handler;
 
 import org.apache.ibatis.type.BaseTypeHandler;
 import org.apache.ibatis.type.JdbcType;

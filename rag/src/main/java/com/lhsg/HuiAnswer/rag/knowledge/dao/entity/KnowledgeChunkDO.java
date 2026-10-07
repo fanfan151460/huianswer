@@ -1,7 +1,7 @@
 package com.lhsg.HuiAnswer.rag.knowledge.dao.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
-import com.lhsg.HuiAnswer.rag.knowledge.dao.handler.PgVectorTypeHandler;
+import com.lhsg.HuiAnswer.rag.knowledge.handler.PgVectorTypeHandler;
 import lombok.Data;
 import lombok.experimental.Accessors;
 

@@ -20,8 +20,9 @@ public class LoginReflushInterceptor implements HandlerInterceptor {
 
     private final StringRedisTemplate stringRedisTemplate;
 
+    @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        String userName = request.getHeader("userName");
+        String userName = request.getHeader("username");
         stringRedisTemplate.expire(String.format(HUI_ANSWER_LOGIN_USER, userName), 1, TimeUnit.HOURS);
         return true;
     }

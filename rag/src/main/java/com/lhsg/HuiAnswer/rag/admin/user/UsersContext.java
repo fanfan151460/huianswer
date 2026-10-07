@@ -9,7 +9,7 @@ public class UsersContext {
 
     public static String getUserName() {
         return Optional.ofNullable(USER_INFO_THREAD_LOCAL.get())
-                .map(UserDTO::getName)
+                .map(UserDTO::getUserName)
                 .orElse(null);
     }
 

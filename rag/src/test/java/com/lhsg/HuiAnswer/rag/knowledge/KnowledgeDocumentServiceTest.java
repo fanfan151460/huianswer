@@ -1,7 +1,10 @@
 package com.lhsg.HuiAnswer.rag.knowledge;
 
 import com.google.gson.Gson;
+import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
+import com.lhsg.HuiAnswer.rag.admin.user.UserDTO;
+import com.lhsg.HuiAnswer.rag.admin.user.UsersContext;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeBaseDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeDocumentDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
@@ -15,6 +18,7 @@ import com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeChunkService;
 import com.lhsg.HuiAnswer.rag.knowledge.service.impl.KnowledgeDocumentServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -44,6 +48,9 @@ class KnowledgeDocumentServiceTest {
 
     @BeforeEach
     void setUp() throws Exception {
+        UserDTO user = new UserDTO();
+        user.setId(1L);
+        UsersContext.setUserDTO(user);
         bases = mock(KnowledgeBaseMapper.class);
         documents = mock(KnowledgeDocumentMapper.class);
         storage = mock(LocalDocumentStorage.class);
@@ -79,8 +86,34 @@ class KnowledgeDocumentServiceTest {
                 new MockMultipartFile("file", "guide.txt", "text/plain", new byte[]{1}));
         assertEquals("pending", response.getStatus());
         assertEquals(11L, response.getId());
+        assertEquals(1L, document.getCreatedBy());
+        assertEquals(1L, response.getCreatedBy());
         verify(producer).send(msg);
         verifyNoInteractions(parser, chunks);
+    }
+
+    @AfterEach
+    void clearUser() {
+        UsersContext.removeUserDTO();
+    }
+
+    @Test
+    void uploadWithoutLoginShouldNotSaveFile() {
+        UsersContext.removeUserDTO();
+        assertThrows(ClientException.class, () -> service.uploadDocument(7L,
+                new MockMultipartFile("file", "guide.txt", "text/plain", new byte[]{1})));
+        verifyNoInteractions(storage, producer);
+    }
+
+    @Test
+    void consumeWithoutRequestContextShouldKeepUploader() {
+        document.setCreatedBy(1L);
+        UsersContext.removeUserDTO();
+
+        service.consumeDocument(msg);
+
+        assertEquals(1L, document.getCreatedBy());
+        assertEquals("success", document.getStatus());
     }
 
     @Test

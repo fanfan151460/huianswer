@@ -1,6 +1,9 @@
 package com.lhsg.HuiAnswer.rag.admin.service;
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.lang.UUID;
+import cn.hutool.core.util.StrUtil;
+import cn.hutool.crypto.digest.BCrypt;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -18,7 +21,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import static com.lhsg.HuiAnswer.rag.constant.constant.HUI_ANSWER_LOGIN_USER;
@@ -54,13 +56,19 @@ public class UserServiceImpl implements IUserService {
 
     @Override
     public UserRespDTO login(UserLoginReqDTO userLoginReqDTO) {
-        LambdaQueryWrapper<UserDO> queryWrapper = Wrappers.lambdaQuery(UserDO.class);
+        if (userLoginReqDTO == null || StrUtil.isBlank(userLoginReqDTO.getUsername())
+                || StrUtil.isBlank(userLoginReqDTO.getPassword())) {
+            throw new ClientException("用户名或密码错误");
+        }
+        LambdaQueryWrapper<UserDO> queryWrapper = Wrappers.lambdaQuery(UserDO.class)
+                .eq(UserDO::getUserName, userLoginReqDTO.getUsername());
         UserDO userDO = userMapper.selectOne(queryWrapper);
-        if (Objects.isNull(userDO)) {
+        if (Objects.isNull(userDO)
+                || !BCrypt.checkpw(userLoginReqDTO.getPassword(), userDO.getPassword())) {
             throw new ClientException("用户名或密码错误");
         }
         String userName = userDO.getUserName();
-        String token = UUID.randomUUID().toString();
+        String token = UUID.randomUUID(true).toString(true);
         UserDTO userDTO = BeanUtil.copyProperties(userDO, UserDTO.class);
 
         Long result = stringRedisTemplate.execute(

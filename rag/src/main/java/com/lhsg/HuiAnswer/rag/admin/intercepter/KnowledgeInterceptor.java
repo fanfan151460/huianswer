@@ -2,6 +2,7 @@ package com.lhsg.HuiAnswer.rag.admin.intercepter;
 
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
+import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.rag.admin.user.UserDTO;
 import com.lhsg.HuiAnswer.rag.admin.user.UsersContext;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,7 +12,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
-import java.rmi.ServerException;
 import java.util.Objects;
 
 import static com.lhsg.HuiAnswer.rag.constant.constant.HUI_ANSWER_LOGIN_USER;
@@ -27,14 +27,14 @@ public class KnowledgeInterceptor implements HandlerInterceptor {
 
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         UsersContext.removeUserDTO();
-        String token = request.getHeader("admin-token");
-        String userName = request.getHeader("userName");
+        String token = request.getHeader("token");
+        String userName = request.getHeader("username");
         if (StrUtil.isBlank(token)) {
-            throw new ServerException("请联系管理员修改知识库相关信息!");
+            throw new ClientException("请联系管理员修改知识库相关信息!");
         }
         Object cacheValue = stringRedisTemplate.opsForHash().get(String.format(HUI_ANSWER_LOGIN_USER, userName), token);
         if (Objects.isNull(cacheValue)) {
-            throw new ServerException("请联系管理员修改知识库相关信息!");
+            throw new ClientException("请联系管理员修改知识库相关信息!");
         }
         UserDTO user = JSONUtil.toBean((String) cacheValue, UserDTO.class);
         UsersContext.setUserDTO(user);

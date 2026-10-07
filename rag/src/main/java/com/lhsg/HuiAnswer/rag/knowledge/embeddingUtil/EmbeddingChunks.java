@@ -2,7 +2,7 @@ package com.lhsg.HuiAnswer.rag.knowledge.embeddingUtil;
 
 import com.google.gson.*;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
-import lombok.Setter;
+import lombok.RequiredArgsConstructor;
 import okhttp3.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -13,8 +13,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /** 调用硅基流动的 Embedding 接口；只负责文本到向量，不负责写数据库。 */
-@Setter
 @Component
+@RequiredArgsConstructor
 public class EmbeddingChunks {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
@@ -31,16 +31,9 @@ public class EmbeddingChunks {
     @Value("${rag.vector.dimension:4096}")
     private int vectorDimension = 4096;
 
-    private final Gson gson = new Gson();
+    private final Gson gson;
     // 复用连接；总耗时由每次 Call 的 timeout 控制，不自动重试或跟随重定向。
-    private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(0, TimeUnit.SECONDS)
-            .writeTimeout(0, TimeUnit.SECONDS)
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .retryOnConnectionFailure(false)
-            .build();
+    private final OkHttpClient httpClient;
 
     /** 分批次处理分块 */
     public List<float[]> doEmbedding(List<String> chunks) {

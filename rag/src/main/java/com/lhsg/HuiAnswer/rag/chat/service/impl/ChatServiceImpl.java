@@ -7,6 +7,8 @@ import com.google.gson.JsonObject;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.rag.chat.dto.LLMChatResp;
+import com.lhsg.HuiAnswer.rag.chat.dto.NeedChunksResp;
+import com.lhsg.HuiAnswer.rag.chat.dto.ParseReferences;
 import com.lhsg.HuiAnswer.rag.chat.dto.QuestionReq;
 import com.lhsg.HuiAnswer.rag.chat.service.IChatService;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.References;
@@ -17,8 +19,8 @@ import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import static com.lhsg.HuiAnswer.rag.chat.dto.prompt.System.BASE_PROMPT;
 
@@ -39,17 +41,19 @@ public class ChatServiceImpl implements IChatService {
     private String apiKey;
 
     @Override
-    public String chat(QuestionReq req){
+    public LLMChatResp chat(QuestionReq req){
         String question = req.getQuestion();
         long kbId = req.getKbId();
         List<References> references = searchChecks.search(kbId, question, topK);
         if (references.isEmpty()) {
             throw new ClientException("未检索到知识库或知识库资料为空");
         }
-        JsonObject body = getBody(question, references);
+        ParseReferences parseReferences = getBodyAndResp(question, references);
+        JsonObject body = parseReferences.getBody();
+        List<NeedChunksResp> needChunks = parseReferences.getNeedChunks();
         Request request = getRequest(body);
         Call call = httpClient.newCall(request);
-        String text = "";
+        String text;
         try (Response response = call.execute()) {
             ResponseBody responseBody = response.body();
             if (response.isSuccessful() && responseBody != null) {
@@ -60,17 +64,26 @@ public class ChatServiceImpl implements IChatService {
         } catch (Exception e) {
             throw new ServiceException("模型连接异常，请稍后再试");
         }
-        String answer = getAnswer(text);
-        if (StrUtil.isBlank(answer)) {
+        LLMChatResp chatResp = getAnswer(text, needChunks);
+        if (StrUtil.isBlank(chatResp.getAnswer())) {
             throw new ServiceException("服务器繁忙中");
         }
-        return answer;
+        return chatResp;
     }
 
-    private JsonObject getBody(String question, List<References> references) {
-        String context = references.stream()
-                .map(r -> "【%s】%s".formatted(r.getDocName(), r.getContent()))
-                .collect(Collectors.joining("\n"));
+    private ParseReferences getBodyAndResp(String question, List<References> references) {
+        StringBuilder contextBuilder = new StringBuilder();
+        List<NeedChunksResp> needChunksRespList = new ArrayList<>();
+        for (int j = 0; j < references.size(); j++) {
+            int num = j + 1;
+            References reference = references.get(j);
+            String docName = reference.getDocName();
+            long docId = reference.getDocId();
+            contextBuilder.append("【%s】[%s]%s".formatted(docName, num, reference.getContent()))
+                    .append("\n");
+            needChunksRespList.add(new NeedChunksResp(num, docId, docName, reference.getChunkId()));
+        }
+        String context = contextBuilder.toString();
         JsonObject body = new JsonObject();
         JsonArray input = getJsonElements(question, context);
         body.addProperty("model", chatModel);
@@ -78,7 +91,7 @@ public class ChatServiceImpl implements IChatService {
         body.addProperty("temperature", 0.2);
         body.addProperty("max_tokens", 1024);
         body.addProperty("stream", false);
-        return body;
+        return new ParseReferences(body, needChunksRespList);
     }
 
     @NotNull
@@ -90,7 +103,7 @@ public class ChatServiceImpl implements IChatService {
         system.addProperty("role", "system");
         system.addProperty("content", BASE_PROMPT);
         reference.addProperty("role", "user");
-        reference.addProperty("content", context);
+        reference.addProperty("content", "【参考资料】" + context);
         user.addProperty("role", "user");
         user.addProperty("content", question);
         input.add(system);
@@ -108,7 +121,7 @@ public class ChatServiceImpl implements IChatService {
         return request.build();
     }
 
-    private String getAnswer(String text) {
+    private LLMChatResp getAnswer(String text, List<NeedChunksResp> needChunks) {
         JsonObject resp = gson.fromJson(text, JsonObject.class);
         JsonObject choices = resp.getAsJsonArray("choices").get(0)
                 .getAsJsonObject();
@@ -116,9 +129,12 @@ public class ChatServiceImpl implements IChatService {
         String model = resp.get("model").getAsString();
         String finishReason = choices.get("finish_reason").getAsString();
         String answer = choices.getAsJsonObject("message").get("content").getAsString();
+
+        if (!finishReason.equals("stop")) {
+            throw new ServiceException("模型回答异常终止");
+        }
         // 后续可能使用
-        LLMChatResp chatResp = new LLMChatResp().setAnswer(answer).setModel(model)
-                .setFinishReason(finishReason).setTokens(tokens);
-        return answer;
+        return new LLMChatResp().setAnswer(answer).setModel(model)
+                .setFinishReason(finishReason).setTokens(tokens).setNeedChunks(needChunks);
     }
 }

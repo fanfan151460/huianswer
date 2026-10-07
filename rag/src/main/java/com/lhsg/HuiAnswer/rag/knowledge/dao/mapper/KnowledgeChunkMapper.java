@@ -21,7 +21,7 @@ public interface KnowledgeChunkMapper extends BaseMapper<KnowledgeChunkDO> {
     int deletePhysicallyByKbId(@Param("kbId") Long kbId);
 
     @Select("""
-    SELECT d.doc_name AS docName, c.content AS content
+    SELECT d.doc_name AS docName, c.content AS content, c.id AS chunkId, c.doc_id
     FROM t_knowledge_chunk c
     JOIN t_knowledge_document d ON d.id = c.doc_id
     WHERE c.kb_id = #{kbId}

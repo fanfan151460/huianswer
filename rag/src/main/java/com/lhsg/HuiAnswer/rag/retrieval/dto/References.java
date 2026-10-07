@@ -8,9 +8,13 @@ import lombok.experimental.Accessors;
 public class References {
     /** 资料来源 */
     private String docName;
+    private long docId;
 
     /** 检索片段文本 */
     private String content;
+
+    /** 片段id */
+    private long chunkId;
 
     // 近似度
 }

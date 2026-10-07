@@ -18,7 +18,7 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>17</java.version>
-        <spring-boot.version>3.5.7</spring-boot.version>
+        <spring-boot.version>3.0.7</spring-boot.version>
         <tika.version>3.2.3</tika.version>
         <postgis.version>2024.1.0</postgis.version>
         <okhttp.version>4.12.0</okhttp.version>

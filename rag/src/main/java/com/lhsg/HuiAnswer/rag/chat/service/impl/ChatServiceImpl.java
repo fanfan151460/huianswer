@@ -3,9 +3,11 @@ package com.lhsg.HuiAnswer.rag.chat.service.impl;
 import cn.hutool.core.util.StrUtil;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
+import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.rag.chat.dto.LLMChatResp;
 import com.lhsg.HuiAnswer.rag.chat.dto.NeedChunksResp;
 import com.lhsg.HuiAnswer.rag.chat.dto.ParseReferences;
@@ -15,18 +17,26 @@ import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
 import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
 import com.lhsg.HuiAnswer.rag.retrieval.rerank.RerankChunks;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
+import okio.BufferedSource;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.lhsg.HuiAnswer.rag.chat.dto.prompt.System.BASE_PROMPT;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ChatServiceImpl implements IChatService {
     private final SearchChunks searchChecks;
     private final RerankChunks rerankChunks;
@@ -74,6 +84,143 @@ public class ChatServiceImpl implements IChatService {
             throw new ServiceException("服务器繁忙中");
         }
         return chatResp;
+    }
+
+    @Override
+    @TimeAnnotation(method = "流式问答处理")
+    public LLMChatResp chatStream(QuestionReq req, SseEmitter emitter) {
+        AtomicBoolean closed = new AtomicBoolean();
+        AtomicReference<Call> activeCall = new AtomicReference<>();
+        // 容器回调与读取任务运行在不同线程，原子变量用于传递关闭状态和当前模型请求。
+        Runnable cancelCall = () -> {
+            closed.set(true);
+            Call call = activeCall.get();
+            if (call != null) {
+                call.cancel();
+            }
+        };
+        emitter.onCompletion(cancelCall);
+        emitter.onError(error -> cancelCall.run());
+        emitter.onTimeout(() -> {
+            cancelCall.run();
+            emitter.complete();
+        });
+
+        try {
+            // SSE 注释不属于正文；也能发现排队期间已经结束的连接，避免继续调用模型。
+            emitter.send(SseEmitter.event().comment("connected"));
+            String question = req.getQuestion();
+            List<Reference> references = searchChecks.mixSearch(req.getKbId(), question, topK);
+            if (closed.get()) {
+                throw new ServiceException("流式连接已关闭");
+            }
+            if (references.isEmpty()) {
+                throw new ClientException("未检索到知识库或知识库资料为空");
+            }
+            references = rerankChunks.rerank(question, references, rerankTopN);
+            if (closed.get()) {
+                throw new ServiceException("流式连接已关闭");
+            }
+            ParseReferences parsed = getBodyAndResp(question, references);
+            JsonObject body = parsed.getBody();
+            body.addProperty("stream", true);
+            Call call = httpClient.newCall(getRequest(body));
+            activeCall.set(call);
+            // 防止连接刚关闭、回调还没看到 call 的竞态。
+            if (closed.get()) {
+                call.cancel();
+                throw new ServiceException("流式连接已关闭");
+            }
+            call.timeout().timeout(60, TimeUnit.SECONDS);
+            try (Response response = call.execute()) {
+                ResponseBody responseBody = response.body();
+                if (!response.isSuccessful() || responseBody == null) {
+                    throw new ServiceException("模型连接失败");
+                }
+                return readStream(responseBody, parsed.getNeedChunks(), emitter);
+            }
+        } catch (Exception e) {
+            cancelCall.run();
+            // 不记录请求头或完整响应，避免密钥和文档正文进入日志。
+            log.warn("流式问答未完成，异常类型：{}", e.getClass().getSimpleName());
+            throw new ServiceException("模型连接异常，请稍后再试");
+        }
+    }
+
+    /** 一条 SSE 事件以空行结束；data 可以有多行，先拼完整事件再解析 JSON。 */
+    private LLMChatResp readStream(ResponseBody body, List<NeedChunksResp> needChunks,
+                                   SseEmitter emitter) throws IOException {
+        LLMChatResp resp = new LLMChatResp().setModel(chatModel).setNeedChunks(needChunks);
+        StringBuilder eventData = new StringBuilder();
+        BufferedSource source = body.source();
+        String line;
+        while ((line = source.readUtf8Line()) != null) {
+            if (line.isEmpty()) {
+                if (eventData.isEmpty()) {
+                    continue;
+                }
+                String data = eventData.toString();
+                eventData.setLength(0);
+                if ("[DONE]".equals(data)) {
+                    break;
+                }
+                readChunk(data, resp,  emitter);
+            } else if (line.startsWith("data:")) {
+                String data = line.substring(5);
+                if (data.startsWith(" ")) {
+                    data = data.substring(1);
+                }
+                if (!eventData.isEmpty()) {
+                    eventData.append('\n');
+                }
+                eventData.append(data);
+            }
+        }
+        // 提前断流、输出长度受限等情况都不能发送成功的 done 事件。
+        if (!"stop".equals(resp.getFinishReason())) {
+            throw new ServiceException("模型回答异常终止");
+        }
+        return resp;
+    }
+
+    private void readChunk(String data, LLMChatResp resp,
+                           SseEmitter emitter) throws IOException {
+        JsonObject chunk = gson.fromJson(data, JsonObject.class);
+        if (chunk.has("error") && !chunk.get("error").isJsonNull()) {
+            throw new ServiceException("模型返回错误");
+        }
+        JsonElement model = chunk.get("model");
+        if (model != null && !model.isJsonNull()) {
+            resp.setModel(model.getAsString());
+        }
+        JsonObject usage = chunk.getAsJsonObject("usage");
+        if (usage != null && usage.has("total_tokens") && !usage.get("total_tokens").isJsonNull()) {
+            // usage 是累计统计：每次覆盖，只保留最终值，不逐条相加。
+            resp.setTokens(usage.get("total_tokens").getAsInt());
+        }
+        JsonArray choices = chunk.getAsJsonArray("choices");
+        if (choices == null || choices.isEmpty()) {
+            return;
+        }
+        JsonObject choice = choices.get(0).getAsJsonObject();
+        JsonElement finishReason = choice.get("finish_reason");
+        if (finishReason != null && !finishReason.isJsonNull()) {
+            resp.setFinishReason(finishReason.getAsString());
+        }
+        JsonObject delta = choice.getAsJsonObject("delta");
+        if (delta == null) {
+            return;
+        }
+        JsonElement content = delta.get("content");
+        if (content == null || content.isJsonNull()) {
+            return;
+        }
+        String fragment = content.getAsString();
+        if (fragment.isEmpty()) {
+            return;
+        }
+        // 只发送正文 content，角色信息和 reasoning_content 不作为正文展示。
+        emitter.send(SseEmitter.event().name("delta").data(fragment));
     }
 
     private ParseReferences getBodyAndResp(String question, List<Reference> references) {
@@ -126,6 +273,9 @@ public class ChatServiceImpl implements IChatService {
         return request.build();
     }
 
+    /**
+     * 非流式输出转换返回实体方法
+     */
     private LLMChatResp getAnswer(String text, List<NeedChunksResp> needChunks) {
         JsonObject resp = gson.fromJson(text, JsonObject.class);
         JsonObject choices = resp.getAsJsonArray("choices").get(0)

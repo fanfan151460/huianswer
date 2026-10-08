@@ -1,6 +1,7 @@
 package com.lhsg.HuiAnswer.rag.chat.controller;
 
 import com.lhsg.HuiAnswer.framework.duplicate.NoDuplicateSubmit;
+import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.framework.result.Result;
 import com.lhsg.HuiAnswer.framework.result.Results;
 import com.lhsg.HuiAnswer.rag.chat.dto.LLMChatResp;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class ChatController {
     private final IChatService chatService;
 
+    @TimeAnnotation(method = "问答全链路")
     @PostMapping("/hui-ansWer/chat")
     @NoDuplicateSubmit
     public Result<LLMChatResp> chat(@RequestBody QuestionReq req) {

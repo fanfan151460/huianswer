@@ -1,6 +1,7 @@
 package com.lhsg.HuiAnswer.rag.retrieval.rerank;
 
 import com.google.gson.Gson;
+import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.RerankReqDTO;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.RerankRespDTO;
@@ -42,6 +43,7 @@ public class RerankChunks {
     private int timeoutSeconds;
 
     /** RRF 候选交给模型重排；请求失败时保留 RRF 的前 topN 个片段。 */
+    @TimeAnnotation(method = "重编排")
     public List<Reference> rerank(String question, List<Reference> candidates, int topN) {
         if (topN <= 0) {
             throw new IllegalArgumentException("topN 必须大于 0");

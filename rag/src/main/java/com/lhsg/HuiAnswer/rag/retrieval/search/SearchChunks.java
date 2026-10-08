@@ -1,5 +1,6 @@
 package com.lhsg.HuiAnswer.rag.retrieval.search;
 
+import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.embeddingUtil.EmbeddingChunks;
 import com.lhsg.HuiAnswer.rag.knowledge.keyWordUtil.ToKeyWord;
@@ -32,6 +33,31 @@ public class SearchChunks {
     private int mixSearchCount;
 
     /**
+     * RRF 融合。两路排名比分之和排序取topK
+     */
+    @TimeAnnotation(method = "混合检索")
+    public List<Reference> mixSearch(long kbId, String question, int topK) {
+        List<Reference> vectorHits = vectorSearch(kbId, question, topK).stream()
+                .map(this::toReference)
+                .toList();
+        List<Reference> keywordHits = searchKeyWord(kbId, question, topK).stream()
+                .map(this::toReference)
+                .toList();
+
+        // chunkId -> 片段，同时作为去重表；同一片段优先保留向量那一路的，在遇到
+        Map<Long, Reference> merged = new LinkedHashMap<>();
+        Map<Long, Double> scores = new HashMap<>();
+        accumulate(vectorHits, merged, scores);
+        accumulate(keywordHits, merged, scores);
+
+        return merged.values().stream()
+                .map(hit -> hit.setScore(scores.get(hit.getChunkId())))
+                .sorted(Comparator.comparingDouble(Reference::getScore).reversed())
+                .limit(mixSearchCount)
+                .toList();
+    }
+
+    /**
      * 向量检索，按余弦距离升序，丢掉距离过大的片段
      */
     public List<VectorChunks> vectorSearch(long kbId, String question, int topK) {
@@ -53,29 +79,6 @@ public class SearchChunks {
         return chunkMapper.keySearch(kbId, keyword, topK);
     }
 
-    /**
-     * RRF 融合。两路排名比分之和排序取topK
-     */
-    public List<Reference> mixSearch(long kbId, String question, int topK) {
-        List<Reference> vectorHits = vectorSearch(kbId, question, topK).stream()
-                .map(this::toReference)
-                .toList();
-        List<Reference> keywordHits = searchKeyWord(kbId, question, topK).stream()
-                .map(this::toReference)
-                .toList();
-
-        // chunkId -> 片段，同时作为去重表；同一片段优先保留向量那一路的，在遇到
-        Map<Long, Reference> merged = new LinkedHashMap<>();
-        Map<Long, Double> scores = new HashMap<>();
-        accumulate(vectorHits, merged, scores);
-        accumulate(keywordHits, merged, scores);
-
-        return merged.values().stream()
-                .map(hit -> hit.setScore(scores.get(hit.getChunkId())))
-                .sorted(Comparator.comparingDouble(Reference::getScore).reversed())
-                .limit(mixSearchCount)
-                .toList();
-    }
 
     /**
      * 将一路结果整理为两个map存储资料和分数，当重复时分数map叠加、资料map不重复覆盖

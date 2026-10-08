@@ -1,5 +1,6 @@
 package com.lhsg.HuiAnswer.rag.knowledge.controller;
 
+import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.framework.result.Result;
 import com.lhsg.HuiAnswer.framework.result.Results;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeDocumentRespDTO;
@@ -18,6 +19,7 @@ import java.util.List;
 public class KnowledgeDocumentController {
     private final IKnowledgeDocumentService knowledgeDocumentService;
 
+    @TimeAnnotation(method = "上传并解析文档")
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<KnowledgeDocumentRespDTO> upload(@PathVariable("kbId") Long kbId,
                                                   @RequestPart("file") MultipartFile file) {

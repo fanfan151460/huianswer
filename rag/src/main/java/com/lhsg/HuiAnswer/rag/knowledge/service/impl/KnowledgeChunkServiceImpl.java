@@ -62,7 +62,6 @@ public class KnowledgeChunkServiceImpl implements IKnowledgeChunkService {
         return chunks;
     }
 
-    // TODO chunk抽出关键词入库
     @Override
     public List<KnowledgeChunkDO> prepareChunks(List<String> chunks, Long kbId, Long docId) {
         List<float[]> embeddingList = embeddingChunks.doEmbedding(chunks);
@@ -73,7 +72,7 @@ public class KnowledgeChunkServiceImpl implements IKnowledgeChunkService {
         for (int i = 0; i < chunks.size(); i++) {
             KnowledgeChunkDO chunk = new KnowledgeChunkDO().setChunkIndex(i)
                     .setContent(chunks.get(i)).setEmbedding(embeddingList.get(i))
-                    .setSearchText(ToKeyWord.toKeyWord(chunks.get(i)))
+                    .setSearchText(ToKeyWord.toKeyWord(chunks.get(i))) // 关键词入库
                     .setKbId(kbId).setDocId(docId);
             records.add(chunk);
         }

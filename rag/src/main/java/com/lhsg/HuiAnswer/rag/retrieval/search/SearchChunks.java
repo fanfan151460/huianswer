@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
-public class SearchChecks {
+public class SearchChunks {
     private final KnowledgeChunkMapper chunkMapper;
     private final EmbeddingChunks embeddingChunks;
 

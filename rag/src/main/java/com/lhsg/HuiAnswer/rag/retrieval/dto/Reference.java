@@ -18,4 +18,7 @@ public class Reference {
 
     /** 融合分数：RRF 的 Σ 1/(k+rank)，越大越靠前 */
     private double score;
+
+    /** 重排序分数 */
+    private double rerankScore;
 }

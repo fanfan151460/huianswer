@@ -12,7 +12,8 @@ import com.lhsg.HuiAnswer.rag.chat.dto.ParseReferences;
 import com.lhsg.HuiAnswer.rag.chat.dto.QuestionReq;
 import com.lhsg.HuiAnswer.rag.chat.service.IChatService;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
-import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChecks;
+import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
+import com.lhsg.HuiAnswer.rag.retrieval.rerank.RerankChunks;
 import lombok.RequiredArgsConstructor;
 import okhttp3.*;
 import org.jetbrains.annotations.NotNull;
@@ -27,7 +28,8 @@ import static com.lhsg.HuiAnswer.rag.chat.dto.prompt.System.BASE_PROMPT;
 @Service
 @RequiredArgsConstructor
 public class ChatServiceImpl implements IChatService {
-    private final SearchChecks searchChecks;
+    private final SearchChunks searchChecks;
+    private final RerankChunks rerankChunks;
     private final OkHttpClient httpClient;
     private final Gson gson;
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
@@ -35,6 +37,8 @@ public class ChatServiceImpl implements IChatService {
     private String chatModel;
     @Value("${rag.topK}")
     private int topK;
+    @Value("${rag.rerank.top-n}")
+    private int rerankTopN;
     @Value("${rag.ai.siliconflow.url}")
     private String url;
     @Value("${rag.ai.siliconflow.api-key}")
@@ -48,6 +52,7 @@ public class ChatServiceImpl implements IChatService {
         if (references.isEmpty()) {
             throw new ClientException("未检索到知识库或知识库资料为空");
         }
+        references = rerankChunks.rerank(question, references, rerankTopN);
         ParseReferences parseReferences = getBodyAndResp(question, references);
         JsonObject body = parseReferences.getBody();
         List<NeedChunksResp> needChunks = parseReferences.getNeedChunks();

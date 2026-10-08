@@ -48,8 +48,11 @@ rag:
     # 与 sql/01_knowledge.sql 的 vector(4096) 对齐；改模型维度时需要同时迁移表。
     dimension: 4096
     metric-type: COSINE
-  topK: 5
+  topK: 10
+  mix-search-count: 5
   max-distance: 0.6
+  # RRF 的 k 值，越大越弱化高名次的优势；60 是常用取值
+  rrf-k: 60
   ai:
     provider: siliconflow
     siliconflow:

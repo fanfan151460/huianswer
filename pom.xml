@@ -28,6 +28,7 @@
         <fastjson2.version>2.0.43</fastjson2.version>
         <redisson.version>3.21.3</redisson.version>
         <rocketmq-spring-boot.version>2.3.0</rocketmq-spring-boot.version>
+        <hanlp.version>portable-1.8.6</hanlp.version>
     </properties>
 
     <dependencyManagement>
@@ -111,6 +112,12 @@
                 <groupId>org.redisson</groupId>
                 <artifactId>redisson-spring-boot-starter</artifactId>
                 <version>${redisson.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.hankcs</groupId>
+                <artifactId>hanlp</artifactId>
+                <version>${hanlp.version}</version>
             </dependency>
 
             <dependency>

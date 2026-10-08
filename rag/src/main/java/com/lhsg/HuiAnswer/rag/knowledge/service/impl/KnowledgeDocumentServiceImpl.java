@@ -7,15 +7,15 @@ import com.lhsg.HuiAnswer.framework.duplicate.NoDuplicateSubmit;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.rag.admin.user.UsersContext;
-import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeDocumentDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
+import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeDocumentDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.documentUtil.parser.ParsedDocument;
 import com.lhsg.HuiAnswer.rag.knowledge.documentUtil.parser.TikaDocumentParser;
 import com.lhsg.HuiAnswer.rag.knowledge.documentUtil.storage.LocalDocumentStorage;
-import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeDocumentRespDTO;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.DocumentMetadataDTO;
+import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeDocumentRespDTO;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeChunkService;
@@ -29,8 +29,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.Objects;
+import java.util.Set;
 
 import static com.lhsg.HuiAnswer.rag.knowledge.enums.FileStatus.*;
 import static com.lhsg.HuiAnswer.rag.knowledge.enums.ParseStatus.*;
@@ -114,6 +114,9 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
             updateDocument(current.setStatus(FILE_PENDING.status()), metadata);
             return current;
         });
+        if (document == null) {
+            throw new ClientException("该文档不存在或出现异常");
+        }
         return enqueue(document);
     }
 
@@ -147,10 +150,11 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
             try (InputStream input = storage.open(document.getFilePath())) {
                 parsed = parser.parse(input, document.getDocName(), extension);
             }
+            String text = parsed.text();
             metadata.addProperty("parseStatus", PARSE_PARSED.status());
             metadata.addProperty("mediaType", parsed.mediaType());
-            metadata.addProperty("textLength", parsed.text().length());
-            List<String> chunks = chunkService.toChunks(parsed.text());
+            metadata.addProperty("textLength", text.length());
+            List<String> chunks = chunkService.toChunks(text);
 
             // 解析、分块、模型 HTTP 调用都在事务外，只把最终写库放进事务。
             List<KnowledgeChunkDO> records = chunkService.prepareChunks(chunks, msg.getKbId(), msg.getDocId());

@@ -25,8 +25,8 @@ public class EmbeddingChunks {
     @Value("${rag.ai.siliconflow.embedding-model}")
     private String embeddingModel;
 
-    private int embeddingBatchSize = 32;
-    private int embeddingTimeoutSeconds = 60;
+    private final int embeddingBatchSize = 32;
+    private final int embeddingTimeoutSeconds = 60;
 
     @Value("${rag.vector.dimension:4096}")
     private int vectorDimension = 4096;

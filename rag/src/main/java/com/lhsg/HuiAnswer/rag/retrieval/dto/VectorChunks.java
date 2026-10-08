@@ -5,7 +5,7 @@ import lombok.experimental.Accessors;
 
 @Data
 @Accessors(chain = true)
-public class References {
+public class VectorChunks {
     /** 资料来源 */
     private String docName;
     private long docId;

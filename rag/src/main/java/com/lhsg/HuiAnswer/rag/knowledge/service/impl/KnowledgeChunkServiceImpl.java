@@ -6,6 +6,7 @@ import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.embeddingUtil.EmbeddingChunks;
+import com.lhsg.HuiAnswer.rag.knowledge.keyWordUtil.ToKeyWord;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeChunkService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -61,6 +62,7 @@ public class KnowledgeChunkServiceImpl implements IKnowledgeChunkService {
         return chunks;
     }
 
+    // TODO chunk抽出关键词入库
     @Override
     public List<KnowledgeChunkDO> prepareChunks(List<String> chunks, Long kbId, Long docId) {
         List<float[]> embeddingList = embeddingChunks.doEmbedding(chunks);
@@ -71,6 +73,7 @@ public class KnowledgeChunkServiceImpl implements IKnowledgeChunkService {
         for (int i = 0; i < chunks.size(); i++) {
             KnowledgeChunkDO chunk = new KnowledgeChunkDO().setChunkIndex(i)
                     .setContent(chunks.get(i)).setEmbedding(embeddingList.get(i))
+                    .setSearchText(ToKeyWord.toKeyWord(chunks.get(i)))
                     .setKbId(kbId).setDocId(docId);
             records.add(chunk);
         }

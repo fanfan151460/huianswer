@@ -184,7 +184,17 @@ application.yml 通过 ${变量名} 读取。可选的连接地址、用户名�
 .env.example 只是变量名示例，Spring Boot 不会自动把它当配置加载。
 用户环境变量不是加密保险库，本机同一用户的程序可以读取；不要打印完整环境变量或分享带值的截图。
 
-已打开的 IDEA 或终端不会自动继承刚设置的用户变量。重启 IDEA/终端，或者使用启动脚本主动读取：
+IDEA 和终端继承启动它们的父进程环境。如果从一直未退出的 Nexus 等桌面启动器打开 IDEA，即使重启 IDEA，也可能继续继承旧环境。
+
+在 IDEA 中运行项目：先保存代码并完全退出 IDEA，再从项目根目录运行下面的脚本。脚本读取 Windows 用户环境变量后打开 IDEA，不保存或输出密码和 API Key。之后在 IDEA 中正常点击运行即可。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-idea.ps1
+```
+
+如果 IDEA 安装路径变了，可使用 -IdeaPath 指定 idea64.exe。不要在旧 IDEA 进程还运行时执行，因为启动请求会转交旧进程。
+
+直接构建并启动项目，也可以使用已有脚本主动读取环境变量：
 
 ```powershell
 .\tools\start-local.ps1

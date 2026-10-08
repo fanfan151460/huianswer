@@ -11,7 +11,7 @@ import com.lhsg.HuiAnswer.rag.chat.dto.NeedChunksResp;
 import com.lhsg.HuiAnswer.rag.chat.dto.ParseReferences;
 import com.lhsg.HuiAnswer.rag.chat.dto.QuestionReq;
 import com.lhsg.HuiAnswer.rag.chat.service.IChatService;
-import com.lhsg.HuiAnswer.rag.retrieval.dto.References;
+import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
 import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChecks;
 import lombok.RequiredArgsConstructor;
 import okhttp3.*;
@@ -44,7 +44,7 @@ public class ChatServiceImpl implements IChatService {
     public LLMChatResp chat(QuestionReq req){
         String question = req.getQuestion();
         long kbId = req.getKbId();
-        List<References> references = searchChecks.search(kbId, question, topK);
+        List<Reference> references = searchChecks.mixSearch(kbId, question, topK);
         if (references.isEmpty()) {
             throw new ClientException("未检索到知识库或知识库资料为空");
         }
@@ -71,12 +71,12 @@ public class ChatServiceImpl implements IChatService {
         return chatResp;
     }
 
-    private ParseReferences getBodyAndResp(String question, List<References> references) {
+    private ParseReferences getBodyAndResp(String question, List<Reference> references) {
         StringBuilder contextBuilder = new StringBuilder();
         List<NeedChunksResp> needChunksRespList = new ArrayList<>();
         for (int j = 0; j < references.size(); j++) {
             int num = j + 1;
-            References reference = references.get(j);
+            Reference reference = references.get(j);
             String docName = reference.getDocName();
             long docId = reference.getDocId();
             contextBuilder.append("【%s】[%s]%s".formatted(docName, num, reference.getContent()))

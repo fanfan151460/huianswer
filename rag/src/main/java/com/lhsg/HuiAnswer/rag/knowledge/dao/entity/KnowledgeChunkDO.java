@@ -28,6 +28,9 @@ public class KnowledgeChunkDO {
     @TableField(typeHandler = PgVectorTypeHandler.class)
     private float[] embedding;
 
+    /** chunk关键词 */
+    private String searchText;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

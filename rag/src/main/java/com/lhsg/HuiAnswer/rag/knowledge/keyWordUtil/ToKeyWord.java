@@ -33,21 +33,21 @@ public final class ToKeyWord {
     }
 
     /**
-     * 索引侧：空格分隔，交给 to_tsvector('simple', ...) 切词
+     * 索引侧：保留词序和重复词，空格分隔，交给 to_tsvector('simple', ...) 切词
      */
     public static String toKeyWord(String text) {
         return String.join(" ", clean(text));
     }
 
     /**
-     * 查询侧：| 分隔，交给 to_tsquery('simple', ...) 当 OR 解析
+     * 查询侧：按首次出现的顺序去重，再用 | 分隔，交给 to_tsquery('simple', ...) 当 OR 解析
      */
     public static String toKeyQuestion(String question) {
-        return String.join("|", clean(question));
+        return String.join("|", new LinkedHashSet<>(clean(question)));
     }
 
     /**
-     * 三层清洗：字符归一化与噪声替换 -> HanLP 分词并按词性过滤 -> 停用词/小写/去重
+     * 三层清洗：字符归一化与噪声替换 -> HanLP 分词并按词性过滤 -> 停用词/小写，保留词序和重复词
      */
     private static List<String> clean(String text) {
         if (text == null || text.isBlank()) {
@@ -59,7 +59,7 @@ public final class ToKeyWord {
         String stripped = NOISE.matcher(normalized).replaceAll(" ");
 
         // 3. HanLP 分词后按词性过滤
-        Set<String> words = new LinkedHashSet<>();
+        List<String> words = new ArrayList<>();
         for (Term term : HanLP.segment(stripped)) {
             String word = term.word;
             if (word == null || word.isBlank() || isNoiseNature(term.nature)) {
@@ -70,7 +70,7 @@ public final class ToKeyWord {
             }
             words.add(word.toLowerCase(Locale.ROOT));
         }
-        return new ArrayList<>(words);
+        return words;
     }
 
     /**

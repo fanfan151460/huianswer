@@ -5,17 +5,20 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.lhsg.HuiAnswer.framework.exception.AbstractException;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
+import com.lhsg.HuiAnswer.framework.exception.RemoteException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
+import com.lhsg.HuiAnswer.framework.result.errorcode.BaseErrorCode;
 import com.lhsg.HuiAnswer.rag.chat.dto.LLMChatResp;
 import com.lhsg.HuiAnswer.rag.chat.dto.NeedChunksResp;
 import com.lhsg.HuiAnswer.rag.chat.dto.ParseReferences;
 import com.lhsg.HuiAnswer.rag.chat.dto.QuestionReq;
 import com.lhsg.HuiAnswer.rag.chat.service.IChatService;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
-import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
 import com.lhsg.HuiAnswer.rag.retrieval.rerank.RerankChunks;
+import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
@@ -26,6 +29,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -53,6 +57,8 @@ public class ChatServiceImpl implements IChatService {
     private String url;
     @Value("${rag.ai.siliconflow.api-key}")
     private String apiKey;
+    @Value("${rag.chat.max-model-wait}")
+    private Long modelWait;
 
     @Override
     public LLMChatResp chat(QuestionReq req){
@@ -126,12 +132,12 @@ public class ChatServiceImpl implements IChatService {
             body.addProperty("stream", true);
             Call call = httpClient.newCall(getRequest(body));
             activeCall.set(call);
-            // 防止连接刚关闭、回调还没看到 call 的竞态。
+            // 防止连接刚关闭、回调还没看到 call 的竞态导致判null没有取消连接
             if (closed.get()) {
                 call.cancel();
                 throw new ServiceException("流式连接已关闭");
             }
-            call.timeout().timeout(60, TimeUnit.SECONDS);
+            call.timeout().timeout(modelWait, TimeUnit.SECONDS);
             try (Response response = call.execute()) {
                 ResponseBody responseBody = response.body();
                 if (!response.isSuccessful() || responseBody == null) {
@@ -140,10 +146,23 @@ public class ChatServiceImpl implements IChatService {
                 return readStream(responseBody, parsed.getNeedChunks(), emitter);
             }
         } catch (Exception e) {
+            boolean aborted = closed.get();
             cancelCall.run();
+
+            if (aborted || e instanceof ClientGoneException) {
+                log.debug("流式问答中止：连接已关闭");
+                throw new ServiceException("流式连接已关闭");
+            }
+
+            if (e instanceof AbstractException ae) {
+                throw ae;
+            }
             // 不记录请求头或完整响应，避免密钥和文档正文进入日志。
-            log.warn("流式问答未完成，异常类型：{}", e.getClass().getSimpleName());
-            throw new ServiceException("模型连接异常，请稍后再试");
+            log.warn("流式问答失败，异常类型：{}，原因：{}", e.getClass().getSimpleName(), e.getMessage());
+            if (e instanceof InterruptedIOException) {
+                throw new ServiceException("模型服务响应超时，请稍后再试", e, BaseErrorCode.SERVICE_TIMEOUT_ERROR);
+            }
+            throw new RemoteException("模型服务暂时不可用，请稍后再试", e, BaseErrorCode.REMOTE_ERROR);
         }
     }
 
@@ -152,6 +171,7 @@ public class ChatServiceImpl implements IChatService {
                                    SseEmitter emitter) throws IOException {
         LLMChatResp resp = new LLMChatResp().setModel(chatModel).setNeedChunks(needChunks);
         StringBuilder eventData = new StringBuilder();
+        StringBuilder answer = new StringBuilder();
         BufferedSource source = body.source();
         String line;
         while ((line = source.readUtf8Line()) != null) {
@@ -164,7 +184,7 @@ public class ChatServiceImpl implements IChatService {
                 if ("[DONE]".equals(data)) {
                     break;
                 }
-                readChunk(data, resp,  emitter);
+                readChunk(data, resp, answer, emitter);
             } else if (line.startsWith("data:")) {
                 String data = line.substring(5);
                 if (data.startsWith(" ")) {
@@ -180,11 +200,12 @@ public class ChatServiceImpl implements IChatService {
         if (!"stop".equals(resp.getFinishReason())) {
             throw new ServiceException("模型回答异常终止");
         }
+        resp.setAnswer(answer.toString());
         return resp;
     }
 
-    private void readChunk(String data, LLMChatResp resp,
-                           SseEmitter emitter) throws IOException {
+    private void readChunk(String data, LLMChatResp resp, StringBuilder answer,
+                           SseEmitter emitter) {
         JsonObject chunk = gson.fromJson(data, JsonObject.class);
         if (chunk.has("error") && !chunk.get("error").isJsonNull()) {
             throw new ServiceException("模型返回错误");
@@ -219,8 +240,20 @@ public class ChatServiceImpl implements IChatService {
         if (fragment.isEmpty()) {
             return;
         }
+        answer.append(fragment);
         // 只发送正文 content，角色信息和 reasoning_content 不作为正文展示。
-        emitter.send(SseEmitter.event().name("delta").data(fragment));
+        try {
+            emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event().name("delta").data(fragment));
+        } catch (Exception sendFailure) {
+            throw new ClientGoneException(sendFailure);
+        }
+    }
+
+    /** 写回前端失败，用于和「上游模型出错」区分开。 */
+    private static final class ClientGoneException extends RuntimeException {
+        ClientGoneException(Throwable cause) {
+            super(cause);
+        }
     }
 
     private ParseReferences getBodyAndResp(String question, List<Reference> references) {

@@ -29,7 +29,7 @@ public class KnowledgeInterceptor implements HandlerInterceptor {
         UsersContext.removeUserDTO();
         String token = request.getHeader("token");
         String userName = request.getHeader("username");
-        if (StrUtil.isBlank(token)) {
+        if (StrUtil.isBlank(token) || !userName.equals("admin")) {
             throw new ClientException("请联系管理员修改知识库相关信息!");
         }
         Object cacheValue = stringRedisTemplate.opsForHash().get(String.format(HUI_ANSWER_LOGIN_USER, userName), token);

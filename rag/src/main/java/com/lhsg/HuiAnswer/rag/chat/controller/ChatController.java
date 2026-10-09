@@ -1,6 +1,7 @@
 package com.lhsg.HuiAnswer.rag.chat.controller;
 
 import com.lhsg.HuiAnswer.framework.duplicate.NoDuplicateSubmit;
+import com.lhsg.HuiAnswer.framework.exception.AbstractException;
 import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.framework.result.Result;
 import com.lhsg.HuiAnswer.framework.result.Results;
@@ -8,6 +9,7 @@ import com.lhsg.HuiAnswer.rag.chat.dto.LLMChatResp;
 import com.lhsg.HuiAnswer.rag.chat.dto.QuestionReq;
 import com.lhsg.HuiAnswer.rag.chat.service.IChatService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -24,6 +26,9 @@ public class ChatController {
     private final IChatService chatService;
     private final ThreadPoolExecutor threadPoolExecutor;
 
+    @Value("${rag.chat.max-sse}")
+    private long sseWait;
+
     @TimeAnnotation(method = "问答全链路")
     @PostMapping("/hui-ansWer/chat")
     @NoDuplicateSubmit
@@ -35,8 +40,9 @@ public class ChatController {
             value = "/hui-ansWer/chat/stream",
             produces = MediaType.TEXT_EVENT_STREAM_VALUE
     )
+    @NoDuplicateSubmit
     public SseEmitter chatStream(@RequestBody QuestionReq req) {
-        SseEmitter emitter = new SseEmitter(60_000L);
+        SseEmitter emitter = new SseEmitter(sseWait);
         try {
             // Controller 先返回 emitter，模型调用和发送事件由线程池继续执行。
             threadPoolExecutor.execute(() -> {
@@ -47,13 +53,20 @@ public class ChatController {
                             .data(resp, MediaType.APPLICATION_JSON));
                     emitter.complete();
                 } catch (Exception e) {
-                    sendError(emitter, "回答生成失败，请稍后再试");
+                    sendError(emitter, userMessage(e));
                 }
             });
         } catch (RejectedExecutionException e) {
             sendError(emitter, "服务繁忙，请稍后再试");
         }
         return emitter;
+    }
+
+    private String userMessage(Exception e) {
+        if (e instanceof AbstractException ae) {
+            return ae.getErrorMessage();
+        }
+        return "回答生成失败，请稍后再试";
     }
 
     private void sendError(SseEmitter emitter, String message) {

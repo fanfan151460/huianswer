@@ -23,7 +23,7 @@ public class UsersContext {
     public static Long requireUserId() {
         Long userId = getUserId();
         if (userId == null || userId <= 0) {
-            throw new ClientException("请先登录管理员账号");
+            throw new ClientException("请先登录账号");
         }
         return userId;
     }

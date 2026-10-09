@@ -8,11 +8,13 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
+import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.rag.admin.dao.entity.UserDO;
 import com.lhsg.HuiAnswer.rag.admin.dao.mapper.UserMapper;
 import com.lhsg.HuiAnswer.rag.admin.dto.UserLoginReqDTO;
 import com.lhsg.HuiAnswer.rag.admin.dto.UserRespDTO;
 import com.lhsg.HuiAnswer.rag.admin.user.UserDTO;
+import com.lhsg.HuiAnswer.rag.admin.user.UserRegisterReqDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -81,5 +83,25 @@ public class UserServiceImpl implements IUserService {
         }
 
         return new UserRespDTO().setToken(token);
+    }
+
+    // TODO username 唯一索引
+    @Override
+    public void register(UserRegisterReqDTO loginReqDTO) {
+        if (loginReqDTO == null || StrUtil.isBlank(loginReqDTO.getUsername()) || StrUtil.isBlank(loginReqDTO.getPassword())) {
+            throw new ClientException("填写信息有误");
+        }
+        if (loginReqDTO.getPassword().length() < 6) {
+            throw new ClientException("密码设置不得低于六位");
+        }
+        if (!loginReqDTO.getPassword().equals(loginReqDTO.getConfirmPassword())) {
+            throw new ClientException("两次密码输入不同");
+        }
+        UserDO userDO = new UserDO().setUserName(loginReqDTO.getUsername())
+                .setPassword(BCrypt.hashpw(loginReqDTO.getPassword(), BCrypt.gensalt()));
+        int insert = userMapper.insert(userDO);
+        if (insert != 1) {
+            throw new ServiceException("服务注册失败");
+        }
     }
 }

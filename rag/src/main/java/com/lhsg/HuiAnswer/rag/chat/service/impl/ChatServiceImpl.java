@@ -9,7 +9,6 @@ import com.lhsg.HuiAnswer.framework.exception.AbstractException;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.RemoteException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
-import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.framework.result.errorcode.BaseErrorCode;
 import com.lhsg.HuiAnswer.rag.admin.user.UsersContext;
 import com.lhsg.HuiAnswer.rag.chat.dto.LLMChatResp;
@@ -21,8 +20,10 @@ import com.lhsg.HuiAnswer.rag.memory.Conversation.service.IConversationService;
 import com.lhsg.HuiAnswer.rag.memory.dto.req.StoreDialogueDTO;
 import com.lhsg.HuiAnswer.rag.memory.memoryStore.SaveDialogue;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
+import com.lhsg.HuiAnswer.rag.retrieval.dto.search.SearchMemoryDTO;
 import com.lhsg.HuiAnswer.rag.retrieval.rerank.RerankChunks;
 import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
+import com.lhsg.HuiAnswer.rag.retrieval.search.SearchMemoryAndSum;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
@@ -62,6 +63,7 @@ public class ChatServiceImpl implements IChatService {
     private final RedissonClient redissonClient;
     private final ThreadPoolExecutor threadPoolExecutor;
     private final IConversationService conversationService;
+    private final SearchMemoryAndSum searchMemoryAndSum;
 
     @Value("${rag.ai.siliconflow.chat-model}")
     private String chatModel;
@@ -77,8 +79,9 @@ public class ChatServiceImpl implements IChatService {
     private Long modelWait;
 
     @Override
-    @TimeAnnotation(method = "流式问答处理")
     public void chat(QuestionReq req, SseEmitter emitter) {
+        // 首字延迟从这里起算：包含建会话、检索、重排和模型首 token 的全部等待。
+        long startNanos = System.nanoTime();
         Long userId = UsersContext.requireUserId();
         if (req.getKbId() <= 0 || StrUtil.isBlank(req.getQuestion())) {
             throw new ClientException("请选择知识库并输入问题");
@@ -102,7 +105,7 @@ public class ChatServiceImpl implements IChatService {
             // Controller 先返回 emitter，模型调用和发送事件由线程池继续执行。
             threadPoolExecutor.execute(() -> {
                 try {
-                    List<NeedChunksResp> needChunks = chatStream(req, emitter, userId);
+                    List<NeedChunksResp> needChunks = chatStream(req, emitter, userId, startNanos);
                     emitter.send(SseEmitter.event()
                             .name("done")
                             .data(needChunks, APPLICATION_JSON));
@@ -120,7 +123,7 @@ public class ChatServiceImpl implements IChatService {
     }
 
     @Override
-    public List<NeedChunksResp> chatStream(QuestionReq req, SseEmitter emitter, Long userId) {
+    public List<NeedChunksResp> chatStream(QuestionReq req, SseEmitter emitter, Long userId, long startNanos) {
         RLock conversationLock = redissonClient.getLock(HUI_ANSWER_LOCK_CONVERSATION.formatted(req.getConversationId()));
         Integer turnNo = null;
         // 放在读取方法外，断流或异常时也能保存已生成的正文和模型统计。
@@ -171,7 +174,7 @@ public class ChatServiceImpl implements IChatService {
                 throw new ServiceException("流式连接已关闭");
             }
             // 获取请求体和本次参考资料
-            ParseReferences parsed = getBodyAndResp(question, references);
+            ParseReferences parsed = getBodyAndResp(question, references, req.getConversationId());
             List<NeedChunksResp> needChunks = parsed.getNeedChunks();
             // 回答参考资料
             resp.setNeedChunks(needChunks);
@@ -189,7 +192,7 @@ public class ChatServiceImpl implements IChatService {
                 if (!response.isSuccessful() || responseBody == null) {
                     throw new ServiceException("模型连接失败");
                 }
-                readStream(responseBody, resp, answer, emitter);
+                readStream(responseBody, resp, answer, emitter, startNanos);
                 if (closed.get()) {
                     throw new ServiceException("流式连接已关闭");
                 }
@@ -244,10 +247,11 @@ public class ChatServiceImpl implements IChatService {
      * 一条 SSE 事件以空行结束；data 可以有多行，先拼完整事件再解析 JSON。
      */
     private void readStream(ResponseBody body, LLMChatResp resp, StringBuilder answer,
-                            SseEmitter emitter) throws IOException {
+                            SseEmitter emitter, long startNanos) throws IOException {
         StringBuilder eventData = new StringBuilder();
         BufferedSource source = body.source();
         String line;
+        boolean firstTokenLogged = false;
         while ((line = source.readUtf8Line()) != null) {
             if (line.isEmpty()) {
                 if (eventData.isEmpty()) {
@@ -258,7 +262,12 @@ public class ChatServiceImpl implements IChatService {
                 if ("[DONE]".equals(data)) {
                     break;
                 }
+                int before = answer.length();
                 readChunk(data, resp, answer, emitter);
+                if (!firstTokenLogged && answer.length() > before) {
+                    firstTokenLogged = true;
+                    log.info("[首字延迟] {} ms", (System.nanoTime() - startNanos) / 1_000_000);
+                }
             } else if (line.startsWith("data:")) {
                 String data = line.substring(5);
                 if (data.startsWith(" ")) {
@@ -329,7 +338,7 @@ public class ChatServiceImpl implements IChatService {
         }
     }
 
-    private ParseReferences getBodyAndResp(String question, List<Reference> references) {
+    private ParseReferences getBodyAndResp(String question, List<Reference> references, Long conversationId) {
         StringBuilder contextBuilder = new StringBuilder();
         List<NeedChunksResp> needChunksRespList = new ArrayList<>();
         for (int j = 0; j < references.size(); j++) {
@@ -343,7 +352,7 @@ public class ChatServiceImpl implements IChatService {
         }
         String context = contextBuilder.toString();
         JsonObject body = new JsonObject();
-        JsonArray input = getJsonElements(question, context);
+        JsonArray input = getJsonElements(question, context, conversationId);
         body.addProperty("model", chatModel);
         body.add("messages", input);
         body.addProperty("temperature", 0.2);
@@ -353,7 +362,7 @@ public class ChatServiceImpl implements IChatService {
     }
 
     @NotNull
-    private static JsonArray getJsonElements(String question, String context) {
+    private JsonArray getJsonElements(String question, String context, Long conversationId) {
         JsonArray input = new JsonArray();
         JsonObject system = new JsonObject();
         JsonObject reference = new JsonObject();
@@ -367,6 +376,19 @@ public class ChatServiceImpl implements IChatService {
         input.add(system);
         input.add(reference);
         input.add(user);
+        List<SearchMemoryDTO> memory = searchMemoryAndSum.getMemory(conversationId);
+        for (SearchMemoryDTO memoryDTO : memory) {
+            if (memoryDTO.getRole().equals("user")) {
+                JsonObject users = new JsonObject();
+                users.addProperty("user", memoryDTO.getContent());
+                input.add(users);
+            }
+            if (memoryDTO.getRole().equals("assistant")) {
+                JsonObject assistants = new JsonObject();
+                assistants.addProperty("assistant", memoryDTO.getContent());
+                input.add(assistants);
+            }
+        }
         return input;
     }
 

@@ -3,11 +3,12 @@ package com.lhsg.HuiAnswer.rag.memory.Conversation.controller;
 import com.lhsg.HuiAnswer.framework.result.Result;
 import com.lhsg.HuiAnswer.framework.result.Results;
 import com.lhsg.HuiAnswer.rag.memory.Conversation.service.IConversationService;
-import com.lhsg.HuiAnswer.rag.memory.dto.req.AddConversationReq;
-import com.lhsg.HuiAnswer.rag.memory.dto.resp.AddConversationResp;
 import com.lhsg.HuiAnswer.rag.memory.dto.resp.ListConversationResp;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
@@ -24,9 +25,4 @@ public class ConversationController {
         return Results.success(conversations);
     }
 
-    @PostMapping("/api/hui-answer/add-conversation")
-    public Result<AddConversationResp> addConversation(@RequestBody AddConversationReq addConversationReq) {
-        AddConversationResp addConversationResp = conversationService.addConversation(addConversationReq);
-        return Results.success(addConversationResp);
-    }
 }

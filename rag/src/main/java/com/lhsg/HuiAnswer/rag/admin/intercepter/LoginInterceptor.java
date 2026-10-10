@@ -10,6 +10,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.util.Objects;
@@ -18,6 +19,7 @@ import static com.lhsg.HuiAnswer.rag.constant.constant.HUI_ANSWER_LOGIN_USER;
 
 @RequiredArgsConstructor
 @Slf4j
+@Component
 public class LoginInterceptor implements HandlerInterceptor {
     private final StringRedisTemplate stringRedisTemplate;
 

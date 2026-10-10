@@ -9,4 +9,8 @@ public class QuestionReq {
 
     /** 选择知识库 */
     private long kbId;
+
+    /** 会话id；不传表示新会话。 */
+    private Long conversationId;
+
 }

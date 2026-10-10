@@ -1,7 +1,5 @@
 package com.lhsg.HuiAnswer.rag.memory.Conversation.service;
 
-import com.lhsg.HuiAnswer.rag.memory.dto.req.AddConversationReq;
-import com.lhsg.HuiAnswer.rag.memory.dto.resp.AddConversationResp;
 import com.lhsg.HuiAnswer.rag.memory.dto.resp.ListConversationResp;
 
 import java.util.List;
@@ -14,5 +12,13 @@ public interface IConversationService {
      */
     List<ListConversationResp> listConversation(long kbId);
 
-    AddConversationResp addConversation(AddConversationReq addConversationReq);
+    /**
+     * 新加会话
+     */
+    Long addConversation(long kbId, String question);
+
+    /**
+     * 查询会话id是否为用户的
+     */
+    Boolean ifYourConversation(Long conversationId);
 }

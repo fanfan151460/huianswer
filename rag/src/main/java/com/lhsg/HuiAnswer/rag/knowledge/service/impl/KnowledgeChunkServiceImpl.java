@@ -5,7 +5,7 @@ import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
-import com.lhsg.HuiAnswer.rag.knowledge.embeddingUtil.EmbeddingChunks;
+import com.lhsg.HuiAnswer.rag.knowledge.embedding.EmbeddingChunks;
 import com.lhsg.HuiAnswer.rag.knowledge.keyWordUtil.ToKeyWord;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeChunkService;
 import jakarta.annotation.PostConstruct;

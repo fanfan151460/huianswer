@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.knowledge.documentUtil.storage;
+package com.lhsg.HuiAnswer.rag.knowledge.document.storage;
 
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import org.springframework.beans.factory.annotation.Value;

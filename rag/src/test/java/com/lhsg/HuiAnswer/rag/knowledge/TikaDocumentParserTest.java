@@ -1,7 +1,7 @@
 package com.lhsg.HuiAnswer.rag.knowledge;
 
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
-import com.lhsg.HuiAnswer.rag.knowledge.documentUtil.parser.TikaDocumentParser;
+import com.lhsg.HuiAnswer.rag.knowledge.document.parser.TikaDocumentParser;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;

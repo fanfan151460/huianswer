@@ -10,6 +10,6 @@ public interface IChatService {
 
     void chat(QuestionReq req, SseEmitter emitter);
 
-    /** userId 在请求线程取得，再显式传给生成任务。 */
-    List<NeedChunksResp> chatStream(QuestionReq req, SseEmitter emitter, Long userId);
+    /** userId 在请求线程取得，再显式传给生成任务；startNanos 由 chat() 记录，用于统计首字延迟。 */
+    List<NeedChunksResp> chatStream(QuestionReq req, SseEmitter emitter, Long userId, long startNanos);
 }

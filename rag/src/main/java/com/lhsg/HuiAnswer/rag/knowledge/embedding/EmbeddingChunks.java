@@ -1,7 +1,8 @@
-package com.lhsg.HuiAnswer.rag.knowledge.embeddingUtil;
+package com.lhsg.HuiAnswer.rag.knowledge.embedding;
 
 import com.google.gson.*;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
+import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import lombok.RequiredArgsConstructor;
 import okhttp3.*;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,6 +37,7 @@ public class EmbeddingChunks {
     private final OkHttpClient httpClient;
 
     /** 分批次处理分块 */
+    @TimeAnnotation(method = "向量化")
     public List<float[]> doEmbedding(List<String> chunks) {
         // 1. 将长列表分成小批，每一批都包含独立的 input 列表。
         List<float[]> result = new ArrayList<>(chunks.size());

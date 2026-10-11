@@ -2,7 +2,7 @@ package com.lhsg.HuiAnswer.rag.retrieval.search;
 
 import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
-import com.lhsg.HuiAnswer.rag.knowledge.embeddingUtil.EmbeddingChunks;
+import com.lhsg.HuiAnswer.rag.knowledge.embedding.EmbeddingChunks;
 import com.lhsg.HuiAnswer.rag.knowledge.keyWordUtil.ToKeyWord;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.KeyWordChunks;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
@@ -19,6 +19,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * 混合检索知识库并重排
+ */
 @Component
 @RequiredArgsConstructor
 public class SearchChunks {

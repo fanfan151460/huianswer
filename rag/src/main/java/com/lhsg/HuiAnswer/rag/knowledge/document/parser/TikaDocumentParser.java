@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.knowledge.documentUtil.parser;
+package com.lhsg.HuiAnswer.rag.knowledge.document.parser;
 
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import org.apache.tika.metadata.Metadata;

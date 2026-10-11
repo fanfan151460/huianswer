@@ -19,7 +19,7 @@ public class MessageController {
 
     @GetMapping("/api/hui-answer/{conversationId}")
     public Result<List<MessageResp>> history(@PathVariable("conversationId") long conversationId) {
-        List<MessageResp> list =  messageService.getHistory(conversationId);
+        List<MessageResp> list =  messageService.getHistory(conversationId, null);
         return Results.success(list);
     }
 }

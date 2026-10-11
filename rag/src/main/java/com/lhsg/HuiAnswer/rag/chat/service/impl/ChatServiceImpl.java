@@ -17,13 +17,15 @@ import com.lhsg.HuiAnswer.rag.chat.dto.ParseReferences;
 import com.lhsg.HuiAnswer.rag.chat.dto.QuestionReq;
 import com.lhsg.HuiAnswer.rag.chat.service.IChatService;
 import com.lhsg.HuiAnswer.rag.memory.Conversation.service.IConversationService;
+import com.lhsg.HuiAnswer.rag.memory.Conversation.service.IMessageService;
+import com.lhsg.HuiAnswer.rag.memory.Conversation.service.ISummaryService;
 import com.lhsg.HuiAnswer.rag.memory.dto.req.StoreDialogueDTO;
-import com.lhsg.HuiAnswer.rag.memory.memoryStore.SaveDialogue;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
-import com.lhsg.HuiAnswer.rag.retrieval.dto.search.SearchMemoryDTO;
+import com.lhsg.HuiAnswer.rag.memory.dto.search.SearchMemoryDTO;
+import com.lhsg.HuiAnswer.rag.memory.dto.search.SearchSummaryMemoryDTO;
 import com.lhsg.HuiAnswer.rag.retrieval.rerank.RerankChunks;
 import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
-import com.lhsg.HuiAnswer.rag.retrieval.search.SearchMemoryAndSum;
+import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
@@ -58,12 +60,16 @@ public class ChatServiceImpl implements IChatService {
     private final RerankChunks rerankChunks;
     private final OkHttpClient httpClient;
     private final Gson gson;
-    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
-    private final SaveDialogue saveDialogue;
+    private final IMessageService messageService;
     private final RedissonClient redissonClient;
-    private final ThreadPoolExecutor threadPoolExecutor;
     private final IConversationService conversationService;
-    private final SearchMemoryAndSum searchMemoryAndSum;
+    private final ISummaryService summaryService;
+    @Resource(name = "chatExecutor")
+    private ThreadPoolExecutor chatExecutor;
+    @Resource(name = "memorySummaryExecutor")
+    private final ThreadPoolExecutor memorySummaryExecutor;
+
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
     @Value("${rag.ai.siliconflow.chat-model}")
     private String chatModel;
@@ -77,6 +83,10 @@ public class ChatServiceImpl implements IChatService {
     private String apiKey;
     @Value("${rag.chat.max-model-wait}")
     private Long modelWait;
+    @Value("${rag.chat.answer-max-tokens}")
+    private int answerMaxTokens;
+    @Value("${rag.chat.answer-temperature}")
+    private double answerTemperature;
 
     @Override
     public void chat(QuestionReq req, SseEmitter emitter) {
@@ -103,9 +113,11 @@ public class ChatServiceImpl implements IChatService {
                     .name("meta")
                     .data(Map.of("conversationId", conversationId), APPLICATION_JSON));
             // Controller 先返回 emitter，模型调用和发送事件由线程池继续执行。
-            threadPoolExecutor.execute(() -> {
+            chatExecutor.execute(() -> {
                 try {
                     List<NeedChunksResp> needChunks = chatStream(req, emitter, userId, startNanos);
+                    // 检查是否压缩对话
+                    memorySummaryExecutor.execute(() -> summaryService.addSummary(req.getConversationId(), userId));
                     emitter.send(SseEmitter.event()
                             .name("done")
                             .data(needChunks, APPLICATION_JSON));
@@ -158,7 +170,7 @@ public class ChatServiceImpl implements IChatService {
             }
 
             // 持久化用户问题到信息表并返回此次对话轮次
-            turnNo = saveDialogue.saveQuestion(req.getConversationId(), userId,
+            turnNo = messageService.saveQuestion(req.getConversationId(), userId,
                     req.getKbId(), req.getQuestion());
 
             String question = req.getQuestion();
@@ -174,7 +186,7 @@ public class ChatServiceImpl implements IChatService {
                 throw new ServiceException("流式连接已关闭");
             }
             // 获取请求体和本次参考资料
-            ParseReferences parsed = getBodyAndResp(question, references, req.getConversationId());
+            ParseReferences parsed = getBodyAndResp(question, references, req.getConversationId(), userId);
             List<NeedChunksResp> needChunks = parsed.getNeedChunks();
             // 回答参考资料
             resp.setNeedChunks(needChunks);
@@ -197,7 +209,7 @@ public class ChatServiceImpl implements IChatService {
                     throw new ServiceException("流式连接已关闭");
                 }
                 // 持久化对话到信息表中为对话历史
-                saveDialogue.storeDialogue(toStoreDTO(req, userId, turnNo, resp, "success", null));
+                messageService.storeDialogue(toStoreDTO(req, userId, turnNo, resp, "success", null));
                 return needChunks;
             }
         } catch (Exception e) {
@@ -209,7 +221,7 @@ public class ChatServiceImpl implements IChatService {
                 String message = aborted ? "流式连接已关闭"
                         : e instanceof AbstractException ae ? ae.getErrorMessage() : "回答生成失败，请稍后再试";
                 try {
-                    saveDialogue.storeDialogue(toStoreDTO(req, userId, turnNo, resp, "failed", message));
+                    messageService.storeDialogue(toStoreDTO(req, userId, turnNo, resp, "failed", message));
                 } catch (Exception saveFailure) {
                     // 保存失败不掩盖原始生成异常；数据库不可用时无法保证失败记录落库。
                     log.error("保存失败回答失败，会话 {}，轮次 {}，异常类型 {}",
@@ -279,8 +291,10 @@ public class ChatServiceImpl implements IChatService {
                 eventData.append(data);
             }
         }
-        // 提前断流、输出长度受限等情况都不能发送成功的 done 事件。
-        if (!"stop".equals(resp.getFinishReason())) {
+        // 截断(length)也算生成完成：正文是完整的，只是没写完，存 success 并留在历史里。
+        // 其余情况（含 finishReason 为 null，即流被掐断）才算失败。
+        String finishReason = resp.getFinishReason();
+        if (!"stop".equals(finishReason) && !"length".equals(finishReason)) {
             throw new ServiceException("模型回答异常终止");
         }
         resp.setAnswer(answer.toString());
@@ -338,7 +352,8 @@ public class ChatServiceImpl implements IChatService {
         }
     }
 
-    private ParseReferences getBodyAndResp(String question, List<Reference> references, Long conversationId) {
+    private ParseReferences getBodyAndResp(String question, List<Reference> references, Long conversationId,
+                                          Long userId) {
         StringBuilder contextBuilder = new StringBuilder();
         List<NeedChunksResp> needChunksRespList = new ArrayList<>();
         for (int j = 0; j < references.size(); j++) {
@@ -352,17 +367,18 @@ public class ChatServiceImpl implements IChatService {
         }
         String context = contextBuilder.toString();
         JsonObject body = new JsonObject();
-        JsonArray input = getJsonElements(question, context, conversationId);
+        JsonArray input = getJsonElements(question, context, conversationId, userId);
         body.addProperty("model", chatModel);
         body.add("messages", input);
-        body.addProperty("temperature", 0.2);
-        body.addProperty("max_tokens", 1024);
+        body.addProperty("temperature", answerTemperature);
+        body.addProperty("max_tokens", answerMaxTokens);
         body.addProperty("stream", false);
         return new ParseReferences(body, needChunksRespList);
     }
 
     @NotNull
-    private JsonArray getJsonElements(String question, String context, Long conversationId) {
+    private JsonArray getJsonElements(String question, String context, Long conversationId,
+                                      Long userId) {
         JsonArray input = new JsonArray();
         JsonObject system = new JsonObject();
         JsonObject reference = new JsonObject();
@@ -374,21 +390,29 @@ public class ChatServiceImpl implements IChatService {
         user.addProperty("role", "user");
         user.addProperty("content", question);
         input.add(system);
-        input.add(reference);
-        input.add(user);
-        List<SearchMemoryDTO> memory = searchMemoryAndSum.getMemory(conversationId);
-        for (SearchMemoryDTO memoryDTO : memory) {
+        SearchSummaryMemoryDTO history = summaryService.summaryMemory(conversationId, userId);
+        if (StrUtil.isNotBlank(history.getSummary())) {
+            JsonObject summary = new JsonObject();
+            summary.addProperty("role", "user");
+            summary.addProperty("content", "【历史摘要，仅用于理解上下文，不作为本次事实或引用依据】" + history.getSummary());
+            input.add(summary);
+        }
+        for (SearchMemoryDTO memoryDTO : history.getMemory()) {
             if (memoryDTO.getRole().equals("user")) {
                 JsonObject users = new JsonObject();
-                users.addProperty("user", memoryDTO.getContent());
+                users.addProperty("role", "user");
+                users.addProperty("content", memoryDTO.getContent());
                 input.add(users);
             }
             if (memoryDTO.getRole().equals("assistant")) {
                 JsonObject assistants = new JsonObject();
-                assistants.addProperty("assistant", memoryDTO.getContent());
+                assistants.addProperty("role", "assistant");
+                assistants.addProperty("content", memoryDTO.getContent());
                 input.add(assistants);
             }
         }
+        input.add(reference);
+        input.add(user);
         return input;
     }
 

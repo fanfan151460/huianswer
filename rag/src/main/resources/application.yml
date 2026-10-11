@@ -59,12 +59,15 @@ rag:
   chat:
     max-sse: 300000
     max-model-wait: 180
+    # 单次回答的最大生成 token。撞到上限时 finish_reason=length，按成功处理并留在历史里。
+    answer-max-tokens: 2048
+    answer-temperature: 0.3
   ai:
     provider: siliconflow
     siliconflow:
       url: ${HUIANSWER_AI_URL:https://api.siliconflow.cn}
       api-key: ${HUIANSWER_AI_API_KEY:}
-      chat-model: ${HUIANSWER_CHAT_MODEL:Qwen/Qwen3-32B}
+      chat-model: ${HUIANSWER_CHAT_MODEL:deepseek-ai/DeepSeek-V4-Flash}
       rerank-model: ${HUIANSWER_RERANK_MODEL:BAAI/bge-reranker-v2-m3}
       embedding-model: ${HUIANSWER_EMBEDDING_MODEL:Qwen/Qwen3-Embedding-8B}
       # 每次 HTTP 请求的文本块数量，与数据库写入批次独立。
@@ -73,3 +76,11 @@ rag:
   chunk:
     chunk-size: 500
     OVERLAP: 100
+  search:
+    summary: true
+    turns: 8
+#    开始压缩的对话消息数量（两倍的轮次）必须为偶数
+    summary-batch-messages: 6
+    # 摘要生成的预算需容纳「旧摘要 + 本次新增」的压缩结果，滚动压缩会越压越长，要留余量。
+    summary-max-tokens: 2048
+    summary-temperature: 0.2

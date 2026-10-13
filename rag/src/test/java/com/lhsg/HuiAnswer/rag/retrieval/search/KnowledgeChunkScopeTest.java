@@ -26,6 +26,7 @@ class KnowledgeChunkScopeTest {
             assertEquals(2, sql.getParameterMappings().stream()
                     .filter(parameter -> parameter.getProperty().startsWith("__frch_kbId_")).count());
             assertTrue(sql.getSql().contains("d.status = 'success'"));
+            assertTrue(sql.getSql().contains("d.enabled = 0"));
         }
         assertTrue(boundSql("vectorSearch", List.of(2L)).getSql().contains("c.embedding <=>"));
     }

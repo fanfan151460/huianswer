@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS t_knowledge_document (
     metadata JSONB,
     status VARCHAR(16) NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'running', 'success', 'failed')),
+    enabled SMALLINT NOT NULL DEFAULT 0
+        CONSTRAINT ck_knowledge_document_enabled CHECK (enabled IN (0, 1)),
     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted SMALLINT NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
@@ -32,6 +34,7 @@ COMMENT ON TABLE t_knowledge_document IS '知识库中的原始文档及处理�
 COMMENT ON COLUMN t_knowledge_document.file_path IS '原文件存储路径，不在本表保存文件二进制';
 COMMENT ON COLUMN t_knowledge_document.metadata IS '可选元数据，JSON 对象';
 COMMENT ON COLUMN t_knowledge_document.status IS 'pending 待处理，running 处理中，success 成功，failed 失败';
+COMMENT ON COLUMN t_knowledge_document.enabled IS '0 启用，1 禁用；只控制检索，不改变解析状态或删除片段';
 CREATE INDEX IF NOT EXISTS idx_document_kb_active
     ON t_knowledge_document (kb_id) WHERE deleted = 0;
 

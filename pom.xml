@@ -100,6 +100,13 @@
                 <version>${mybatis-plus.version}</version>
             </dependency>
 
+            <!-- MP 3.5.9 起分页插件需单独引入，版本与 MP 保持一致。 -->
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>mybatis-plus-jsqlparser</artifactId>
+                <version>${mybatis-plus.version}</version>
+            </dependency>
+
             <!-- fastjson2: JSON 序列化（NoDuplicateAspect 计算参数 MD5） -->
             <dependency>
                 <groupId>com.alibaba.fastjson2</groupId>

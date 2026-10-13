@@ -34,6 +34,9 @@ public class KnowledgeDocumentDO {
     /** pending / running / success / failed */
     private String status;
 
+    /** 0 启用，1 禁用；独立于处理状态和逻辑删除。 */
+    private Integer enabled;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

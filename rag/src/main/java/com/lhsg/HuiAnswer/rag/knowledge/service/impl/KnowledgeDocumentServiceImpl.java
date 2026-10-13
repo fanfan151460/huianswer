@@ -1,6 +1,9 @@
 package com.lhsg.HuiAnswer.rag.knowledge.service.impl;
 
+import cn.hutool.core.bean.BeanUtil;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.lhsg.HuiAnswer.framework.duplicate.NoDuplicateSubmit;
@@ -11,11 +14,13 @@ import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeDocumentDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeDocumentMapper;
+import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.document.parser.ParsedDocument;
 import com.lhsg.HuiAnswer.rag.knowledge.document.parser.TikaDocumentParser;
 import com.lhsg.HuiAnswer.rag.knowledge.document.storage.LocalDocumentStorage;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.DocumentMetadataDTO;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeDocumentRespDTO;
+import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeChunkRespDTO;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeChunkService;
@@ -44,6 +49,7 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
 
     private final KnowledgeBaseMapper baseMapper;
     private final KnowledgeDocumentMapper documentMapper;
+    private final KnowledgeChunkMapper chunkMapper;
     private final LocalDocumentStorage storage;
     private final TikaDocumentParser parser;
     private final Gson gson;
@@ -68,7 +74,7 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
         metadata.addProperty("fileSize", file.getSize());
         metadata.addProperty("extension", extension);
         KnowledgeDocumentDO document = new KnowledgeDocumentDO().setKbId(kbId).setCreatedBy(createdBy)
-                .setDocName(name).setFilePath(path).setStatus(FILE_PENDING.status())
+                .setDocName(name).setFilePath(path).setStatus(FILE_PENDING.status()).setEnabled(0)
                 .setMetadata(metadata.toString());
 
         // 短事务登记 pending；与删除知识库锁同一行，提交后再解析。
@@ -133,17 +139,24 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
 
     @Override
     public void consumeDocument(DocumentMsg msg) {
-        KnowledgeDocumentDO document = requireDocument(msg.getKbId(), msg.getDocId());
+        // 与删除文档锁同一知识库行；已删除任务直接消费完成，不反复重试。
+        KnowledgeDocumentDO document = transactionTemplate.execute(status -> {
+            KnowledgeDocumentDO current = findDocumentForConsume(msg.getKbId(), msg.getDocId());
+            if (current == null) {
+                return null;
+            }
+            JsonObject metadata = readMetadata(current);
+            metadata.remove("errorMessage");
+            metadata.remove("parseStatus");
+            updateDocument(current.setStatus(FILE_RUNNING.status()), metadata);
+            return current;
+        });
+        if (document == null) {
+            log.info("跳过已删除的文档任务，docId={}", msg.getDocId());
+            return;
+        }
         JsonObject metadata = readMetadata(document);
-        metadata.remove("errorMessage");
-        metadata.remove("parseStatus");
         try {
-            // 先提交 running，外部轮询可以看到处理中的状态。
-            transactionTemplate.executeWithoutResult(status -> {
-                KnowledgeDocumentDO current = lockDocument(msg.getKbId(), msg.getDocId());
-                updateDocument(current.setStatus(FILE_RUNNING.status()), metadata);
-            });
-
             String extension = document.getDocName().substring(document.getDocName().lastIndexOf('.') + 1)
                     .toLowerCase(Locale.ROOT);
             ParsedDocument parsed;
@@ -154,12 +167,15 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
             metadata.addProperty("parseStatus", PARSE_PARSED.status());
             metadata.addProperty("mediaType", parsed.mediaType());
             metadata.addProperty("textLength", text.length());
+            // 执行分块
             List<String> chunks = chunkService.toChunks(text);
-
-            // 解析、分块、模型 HTTP 调用都在事务外，只把最终写库放进事务。
+            // 向量化分块，解析、分块、模型 HTTP 调用都在事务外。
             List<KnowledgeChunkDO> records = chunkService.prepareChunks(chunks, msg.getKbId(), msg.getDocId());
             transactionTemplate.executeWithoutResult(status -> {
-                KnowledgeDocumentDO current = lockDocument(msg.getKbId(), msg.getDocId());
+                KnowledgeDocumentDO current = findDocumentForConsume(msg.getKbId(), msg.getDocId());
+                if (current == null) {
+                    return; // 处理期间已删除文档，不再写回片段。
+                }
                 chunkService.saveChunks(records);
                 JsonObject completedMetadata = metadata.deepCopy();
                 completedMetadata.addProperty("parseStatus", PARSE_SUCCESS.status());
@@ -178,8 +194,24 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
         }
     }
 
-    /** 与删除知识库锁同一行，防止删除后又写入片段。只能在事务中调用。
-     * TODO 使用分布式锁优化，直观显示修改冲突
+    /** MQ 任务在短事务内检查归属；已删除的知识库或文档返回 null。 */
+    private KnowledgeDocumentDO findDocumentForConsume(Long kbId, Long docId) {
+        validateKbId(kbId);
+        if (docId == null || docId <= 0) {
+            throw new ClientException("文档ID必须是正整数");
+        }
+        if (baseMapper.selectActiveForUpdate(kbId) == null) {
+            return null;
+        }
+        KnowledgeDocumentDO document = documentMapper.selectById(docId);
+        if (document != null && !Objects.equals(kbId, document.getKbId())) {
+            throw new ClientException("文档不属于该知识库");
+        }
+        return document;
+    }
+
+    /**
+     * 与删除知识库锁同一行，防止删除后又写入片段。只能在事务中调用。
      */
     private KnowledgeDocumentDO lockDocument(Long kbId, Long docId) {
         if (baseMapper.selectActiveForUpdate(kbId) == null) {
@@ -217,15 +249,65 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
     }
 
     @Override
-    public List<KnowledgeDocumentRespDTO> listDocument(Long kbId) {
+    public IPage<KnowledgeDocumentRespDTO> listDocument(Long kbId, long current, long size) {
         validateKbId(kbId);
+        validatePage(current, size);
         if (baseMapper.selectById(kbId) == null) {
             throw new ClientException("知识库不存在");
         }
-        return documentMapper.selectList(Wrappers.<KnowledgeDocumentDO>lambdaQuery()
-                        .eq(KnowledgeDocumentDO::getKbId, kbId)
-                        .orderByDesc(KnowledgeDocumentDO::getId))
-                .stream().map(this::toRespDTO).toList();
+        return documentMapper.selectPage(new Page<>(current, size),
+                        Wrappers.<KnowledgeDocumentDO>lambdaQuery()
+                                .eq(KnowledgeDocumentDO::getKbId, kbId)
+                                .orderByDesc(KnowledgeDocumentDO::getId))
+                .convert(this::toRespDTO);
+    }
+
+    @Override
+    public void updateEnabled(Long kbId, Long docId, Integer enabled) {
+        if (enabled == null || (enabled != 0 && enabled != 1)) {
+            throw new ClientException("enabled 只能是 0 或 1");
+        }
+        transactionTemplate.executeWithoutResult(status -> {
+            lockDocument(kbId, docId);
+            // 只更新开关，避免把处理状态或元数据一起覆盖。
+            KnowledgeDocumentDO update = new KnowledgeDocumentDO().setId(docId).setEnabled(enabled);
+            if (documentMapper.updateById(update) != 1) {
+                throw new ServiceException("修改文档启用状态失败");
+            }
+        });
+    }
+
+    @Override
+    public void deleteDocument(Long kbId, Long docId) {
+        transactionTemplate.executeWithoutResult(status -> {
+            lockDocument(kbId, docId);
+            chunkMapper.deletePhysicallyByDocId(docId);
+            if (documentMapper.deleteById(docId) != 1) {
+                throw new ServiceException("删除文档失败");
+            }
+        });
+    }
+
+    @Override
+    public IPage<KnowledgeChunkRespDTO> pageChunks(Long kbId, Long docId, long current, long size) {
+        validatePage(current, size);
+        requireDocument(kbId, docId);
+        return chunkMapper.selectPage(new Page<>(current, size),
+                        Wrappers.<KnowledgeChunkDO>lambdaQuery()
+                                .select(KnowledgeChunkDO::getId, KnowledgeChunkDO::getKbId,
+                                        KnowledgeChunkDO::getDocId, KnowledgeChunkDO::getChunkIndex,
+                                        KnowledgeChunkDO::getContent, KnowledgeChunkDO::getCreateTime,
+                                        KnowledgeChunkDO::getUpdateTime)
+                                .eq(KnowledgeChunkDO::getKbId, kbId)
+                                .eq(KnowledgeChunkDO::getDocId, docId)
+                                .orderByAsc(KnowledgeChunkDO::getChunkIndex))
+                .convert(each -> BeanUtil.copyProperties(each, KnowledgeChunkRespDTO.class));
+    }
+
+    private void validatePage(long current, long size) {
+        if (current <= 0 || size < 1 || size > 100) {
+            throw new ClientException("页码必须大于0，每页数量须为1~100");
+        }
     }
 
     private void validateKbId(Long kbId) {
@@ -261,7 +343,7 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
     private KnowledgeDocumentRespDTO toRespDTO(KnowledgeDocumentDO document) {
         KnowledgeDocumentRespDTO response = new KnowledgeDocumentRespDTO().setId(document.getId())
                 .setKbId(document.getKbId()).setCreatedBy(document.getCreatedBy())
-                .setDocName(document.getDocName()).setStatus(document.getStatus())
+                .setDocName(document.getDocName()).setStatus(document.getStatus()).setEnabled(document.getEnabled())
                 .setCreateTime(document.getCreateTime()).setUpdateTime(document.getUpdateTime());
         if (document.getMetadata() != null) {
             DocumentMetadataDTO metadata = gson.fromJson(document.getMetadata(), DocumentMetadataDTO.class);

@@ -22,7 +22,7 @@ public class EmitterPoolConfig {
                 60, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<>(100),
                 // 满线程让控制层线程去跑，降级流量
-                new ThreadPoolExecutor.CallerRunsPolicy()
+                new ThreadPoolExecutor.AbortPolicy()
         );
     }
 
@@ -31,7 +31,7 @@ public class EmitterPoolConfig {
     public ThreadPoolExecutor subQuestionExecutor() {
         return new ThreadPoolExecutor(
                 40,
-                40,
+                80,
                 60, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<>(100),
                 new ThreadPoolExecutor.AbortPolicy()

@@ -33,6 +33,7 @@ public interface KnowledgeChunkMapper extends BaseMapper<KnowledgeChunkDO> {
               AND c.deleted = 0
               AND d.deleted = 0
               AND d.status = 'success'
+              AND d.enabled = 0
             <if test="kbIds != null">
                 <choose>
                     <when test="kbIds.size() > 0">
@@ -68,6 +69,7 @@ public interface KnowledgeChunkMapper extends BaseMapper<KnowledgeChunkDO> {
               AND c.deleted = 0
               AND d.deleted = 0
               AND d.status = 'success'
+              AND d.enabled = 0
               AND c.search_vector @@ q.query
             <if test="kbIds != null">
                 <choose>

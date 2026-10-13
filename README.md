@@ -224,9 +224,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-idea.ps1
 
 实体类位于 rag/src/main/java/com/lhsg/HuiAnswer/rag 下。
 
-文档采用逻辑删除。清理文档时，业务服务应在同一事务中标记文档删除并调用
-KnowledgeChunkMapper.deletePhysicallyByDocId；后续课程会实现该服务及文件清理。
-自定义检索 SQL 仍需显式排除已删除知识库/文档/片段，并限定成功处理的文档。
+文档采用逻辑删除。删除接口在同一事务中标记文档删除并物理清理片段，保留磁盘原文件。
+自定义检索 SQL 显式排除已删除知识库/文档/片段，并限定处理成功且启用的文档。
+文档启停、删除和 MP 分页接口见 [文档管理接口](docs/document-management.md)。
 
 ## 验证
 

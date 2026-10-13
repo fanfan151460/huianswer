@@ -30,21 +30,22 @@ public class KnowledgeBaseServiceImpl implements IKnowledgeBaseService {
     @Override
     public KnowledgeBaseRespDTO createBase(CreateBaseReqDTO createBaseReqDTO) {
         Long createdBy = UsersContext.requireUserId();
-        String name = validateName(createBaseReqDTO == null ? null : createBaseReqDTO.getName());
+        String name = validateName(createBaseReqDTO.getName());
         String description = normalizeDescription(createBaseReqDTO.getDescription());
         KnowledgeBaseDO knowledgeBaseDO = new KnowledgeBaseDO().setName(name)
                 .setDescription(description).setCreatedBy(createdBy);
         if (knowledgeBaseMapper.insert(knowledgeBaseDO) != 1) {
             throw new ServiceException("创建知识库失败");
         }
-        // @TableId(AUTO) 回填 ID，审计字段由 MetaObjectHandler 填充。
         return toRespDTO(knowledgeBaseDO);
     }
 
     @Override
     public List<KnowledgeBaseRespDTO> listBase() {
+        Long userId = UsersContext.requireUserId();
         // @TableLogic 自动补上 deleted = 0。
         return knowledgeBaseMapper.selectList(Wrappers.<KnowledgeBaseDO>lambdaQuery()
+                        .eq(KnowledgeBaseDO::getCreatedBy, userId)
                         .orderByDesc(KnowledgeBaseDO::getId))
                 .stream().map(this::toRespDTO).toList();
     }
@@ -57,7 +58,7 @@ public class KnowledgeBaseServiceImpl implements IKnowledgeBaseService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public KnowledgeBaseRespDTO updateBase(Long id, UpdateBaseReqDTO updateBaseReqDTO) {
-        String name = validateName(updateBaseReqDTO == null ? null : updateBaseReqDTO.getName());
+        String name = validateName(updateBaseReqDTO.getName());
         KnowledgeBaseDO knowledgeBaseDO = requireBase(id).setName(name);
         if (updateBaseReqDTO.getDescription() != null) {
             knowledgeBaseDO.setDescription(normalizeDescription(updateBaseReqDTO.getDescription()));
@@ -75,15 +76,11 @@ public class KnowledgeBaseServiceImpl implements IKnowledgeBaseService {
         if (id == null || id <= 0) {
             throw new ClientException("知识库ID必须是正整数");
         }
-        // 与文档上传锁同一行：拿锁后再清理，避免漏掉并发导入的文档。
         if (knowledgeBaseMapper.selectActiveForUpdate(id) == null) {
             throw new ClientException("知识库不存在");
         }
-        // 1. 物理清理片段：同一行保存原文和向量，删除时一起清理。
         knowledgeChunkMapper.deletePhysicallyByKbId(id);
-        // 2. 保留文档记录，标记为删除。
         documentMapper.markDeletedByKbId(id, LocalDateTime.now());
-        // 3. 删除知识库。任一步抛异常，上面的操作都由事务回滚。
         if (knowledgeBaseMapper.deleteById(id) != 1) {
             throw new ClientException("知识库不存在或已被删除");
         }

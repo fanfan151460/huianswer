@@ -28,6 +28,11 @@
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+        </dependency>
+
         <!-- PostgreSQL JDBC 驱动；vector 是数据库扩展，不是 PostGIS 空间扩展。 -->
         <dependency>
             <groupId>org.postgresql</groupId>

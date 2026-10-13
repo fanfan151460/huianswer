@@ -20,6 +20,9 @@ public class KnowledgeDocumentRespDTO {
     /** pending 排队中；running 处理中；failed 导入失败；success 全部片段已入库。 */
     private String status;
 
+    /** 0 启用，1 禁用。 */
+    private Integer enabled;
+
     private String parseStatus;
 
     private Integer textLength;

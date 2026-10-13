@@ -8,7 +8,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 流式输出异步线程池
+ * 问答相关的异步线程池
  */
 @Configuration
 public class EmitterPoolConfig {
@@ -23,6 +23,18 @@ public class EmitterPoolConfig {
                 new LinkedBlockingQueue<>(100),
                 // 满线程让控制层线程去跑，降级流量
                 new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+    }
+
+    // 独立执行完整子问题任务，避免聊天任务等待同一个池中的子任务。
+    @Bean(destroyMethod = "shutdown", name = "subQuestionExecutor")
+    public ThreadPoolExecutor subQuestionExecutor() {
+        return new ThreadPoolExecutor(
+                40,
+                40,
+                60, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(100),
+                new ThreadPoolExecutor.AbortPolicy()
         );
     }
 

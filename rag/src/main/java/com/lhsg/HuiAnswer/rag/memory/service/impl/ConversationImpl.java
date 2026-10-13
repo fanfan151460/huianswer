@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.memory.Conversation.service.impl;
+package com.lhsg.HuiAnswer.rag.memory.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
@@ -7,7 +7,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.rag.admin.user.UsersContext;
-import com.lhsg.HuiAnswer.rag.memory.Conversation.service.IConversationService;
+import com.lhsg.HuiAnswer.rag.memory.service.IConversationService;
 import com.lhsg.HuiAnswer.rag.memory.dao.entity.ChatConversationDO;
 import com.lhsg.HuiAnswer.rag.memory.dao.mapper.ChatConversationMapper;
 import com.lhsg.HuiAnswer.rag.memory.dto.resp.ListConversationResp;
@@ -22,14 +22,10 @@ public class ConversationImpl implements IConversationService {
     private final ChatConversationMapper chatConversationMapper;
 
     @Override
-    public List<ListConversationResp> listConversation(long kbId) {
+    public List<ListConversationResp> listConversation() {
         long userId = UsersContext.requireUserId();
-        if (kbId <= 0) {
-            throw new ClientException("知识库 ID 不正确");
-        }
         LambdaQueryWrapper<ChatConversationDO> wrapper = Wrappers.lambdaQuery(ChatConversationDO.class)
                 .eq(ChatConversationDO::getUserId, userId)
-                .eq(ChatConversationDO::getKbId, kbId)
                 .orderByDesc(ChatConversationDO::getUpdateTime)
                 .orderByDesc(ChatConversationDO::getId);
         // @TableLogic 会自动排除已删除的会话。
@@ -38,15 +34,12 @@ public class ConversationImpl implements IConversationService {
     }
 
     @Override
-    public Long addConversation(long kbId, String question) {
+    public Long addConversation(String question) {
         Long userId = UsersContext.requireUserId();
-        if (kbId <= 0) {
-            throw new ClientException("知识库 ID 不正确");
-        }
         if (StrUtil.isBlank(question)) {
             throw new ClientException("请咨询你想要回复的问题");
         }
-        ChatConversationDO chatConversationDO = new ChatConversationDO().setUserId(userId).setKbId(kbId)
+        ChatConversationDO chatConversationDO = new ChatConversationDO().setUserId(userId)
                 .setTitle(StrUtil.sub(question.trim(), 0, 128));
         int insert = chatConversationMapper.insert(chatConversationDO);
         if (insert <= 0) {

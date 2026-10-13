@@ -50,11 +50,7 @@ public class RewriteQuestion {
                 .setRewrittenQuestion(question)
                 .setSubQuestions(List.of(question));
         // 第一轮也可能有多个需求，因此没有历史时仍然调用模型。
-        try {
-            if (StrUtil.isBlank(apiKey) || maxTokens <= 0 || timeoutSeconds <= 0) {
-                throw new IllegalStateException("问题改写配置不完整");
-            }
-            Request request = getRequest(question, history);
+        try {Request request = getRequest(question, history);
             Call call = httpClient.newCall(request);
             call.timeout().timeout(timeoutSeconds, TimeUnit.SECONDS);
             try (Response response = call.execute()) {
@@ -70,8 +66,7 @@ public class RewriteQuestion {
                 }
                 String content = choice.getAsJsonObject("message").get("content").getAsString();
                 RewriteResultDTO result = gson.fromJson(content, RewriteResultDTO.class);
-                if (result == null || StrUtil.isBlank(result.getRewrittenQuestion())
-                        || result.getSubQuestions() == null || result.getSubQuestions().isEmpty()
+                if (StrUtil.isBlank(result.getRewrittenQuestion())
                         || result.getSubQuestions().stream().anyMatch(StrUtil::isBlank)) {
                     throw new IllegalStateException("改写与拆分结果不完整");
                 }
@@ -116,6 +111,7 @@ public class RewriteQuestion {
         body.addProperty("stream", false);
         body.addProperty("max_tokens", maxTokens);
         body.addProperty("temperature", temperature);
+        body.addProperty("enable_thinking", false);
         JsonObject responseFormat = new JsonObject();
         responseFormat.addProperty("type", "json_object");
         body.add("response_format", responseFormat);

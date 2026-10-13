@@ -1,6 +1,6 @@
 package com.lhsg.HuiAnswer.rag.memory.dto.resp;
 
-import com.lhsg.HuiAnswer.rag.chat.dto.NeedChunksResp;
+import com.lhsg.HuiAnswer.rag.chat.dto.resp.NeedChunksResp;
 import lombok.Data;
 import lombok.experimental.Accessors;
 

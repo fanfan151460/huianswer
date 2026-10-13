@@ -3,6 +3,7 @@ package com.lhsg.HuiAnswer.rag.knowledge.embedding;
 import com.google.gson.*;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
+import com.lhsg.HuiAnswer.rag.config.ApiUrl;
 import lombok.RequiredArgsConstructor;
 import okhttp3.*;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,8 +20,6 @@ import java.util.concurrent.TimeUnit;
 public class EmbeddingChunks {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
-    @Value("${rag.ai.siliconflow.url}")
-    private String url;
     @Value("${rag.ai.siliconflow.api-key}")
     private String apiKey;
     @Value("${rag.ai.siliconflow.embedding-model}")
@@ -35,6 +34,7 @@ public class EmbeddingChunks {
     private final Gson gson;
     // 复用连接；总耗时由每次 Call 的 timeout 控制，不自动重试或跟随重定向。
     private final OkHttpClient httpClient;
+    private final ApiUrl apiUrl;
 
     /** 分批次处理分块 */
     @TimeAnnotation(method = "向量化")
@@ -66,7 +66,7 @@ public class EmbeddingChunks {
         Request request;
         try {
             request = new Request.Builder()
-                    .url(url + "/v1/embeddings")
+                    .url(apiUrl.embeddingsUrl())
                     .header("Authorization", "Bearer " + apiKey.strip())
                     .post(RequestBody.create(body.toString(), JSON))
                     .build();

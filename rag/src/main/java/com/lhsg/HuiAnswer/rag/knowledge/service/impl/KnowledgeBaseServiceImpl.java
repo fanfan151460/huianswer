@@ -31,7 +31,9 @@ public class KnowledgeBaseServiceImpl implements IKnowledgeBaseService {
     public KnowledgeBaseRespDTO createBase(CreateBaseReqDTO createBaseReqDTO) {
         Long createdBy = UsersContext.requireUserId();
         String name = validateName(createBaseReqDTO == null ? null : createBaseReqDTO.getName());
-        KnowledgeBaseDO knowledgeBaseDO = new KnowledgeBaseDO().setName(name).setCreatedBy(createdBy);
+        String description = normalizeDescription(createBaseReqDTO.getDescription());
+        KnowledgeBaseDO knowledgeBaseDO = new KnowledgeBaseDO().setName(name)
+                .setDescription(description).setCreatedBy(createdBy);
         if (knowledgeBaseMapper.insert(knowledgeBaseDO) != 1) {
             throw new ServiceException("创建知识库失败");
         }
@@ -57,6 +59,9 @@ public class KnowledgeBaseServiceImpl implements IKnowledgeBaseService {
     public KnowledgeBaseRespDTO updateBase(Long id, UpdateBaseReqDTO updateBaseReqDTO) {
         String name = validateName(updateBaseReqDTO == null ? null : updateBaseReqDTO.getName());
         KnowledgeBaseDO knowledgeBaseDO = requireBase(id).setName(name);
+        if (updateBaseReqDTO.getDescription() != null) {
+            knowledgeBaseDO.setDescription(normalizeDescription(updateBaseReqDTO.getDescription()));
+        }
         // updateById 带有 deleted = 0 条件；若记录已被并发删除，更新条数为 0。
         if (knowledgeBaseMapper.updateById(knowledgeBaseDO) != 1) {
             throw new ClientException("知识库不存在或已被删除");
@@ -107,9 +112,18 @@ public class KnowledgeBaseServiceImpl implements IKnowledgeBaseService {
         return normalized;
     }
 
+    private String normalizeDescription(String description) {
+        String normalized = description == null ? "" : description.strip();
+        if (normalized.length() > 1000) {
+            throw new ClientException("知识库描述不能超过1000个字符");
+        }
+        return normalized;
+    }
+
     private KnowledgeBaseRespDTO toRespDTO(KnowledgeBaseDO knowledgeBaseDO) {
         return new KnowledgeBaseRespDTO().setId(knowledgeBaseDO.getId())
-                .setName(knowledgeBaseDO.getName()).setCreatedBy(knowledgeBaseDO.getCreatedBy())
+                .setName(knowledgeBaseDO.getName()).setDescription(knowledgeBaseDO.getDescription())
+                .setCreatedBy(knowledgeBaseDO.getCreatedBy())
                 .setCreateTime(knowledgeBaseDO.getCreateTime())
                 .setUpdateTime(knowledgeBaseDO.getUpdateTime());
     }

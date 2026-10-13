@@ -12,8 +12,6 @@ public class ListConversationResp {
 
     private String title;
 
-    private Long kbId;
-
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

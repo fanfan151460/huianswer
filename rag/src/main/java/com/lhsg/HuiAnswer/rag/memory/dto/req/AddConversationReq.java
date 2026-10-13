@@ -6,7 +6,5 @@ import lombok.experimental.Accessors;
 @Data
 @Accessors(chain = true)
 public class AddConversationReq {
-    private long kbId;
-
     private String question;
 }

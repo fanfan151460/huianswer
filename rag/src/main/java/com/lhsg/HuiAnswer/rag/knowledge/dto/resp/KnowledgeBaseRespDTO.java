@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 public class KnowledgeBaseRespDTO {
     private Long id;
     private String name;
+    private String description;
 
     /** 创建者的管理员 ID */
     private Long createdBy;

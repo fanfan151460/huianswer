@@ -19,7 +19,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -47,17 +48,13 @@ public class Identify {
     @Value("${rag.intent.timeout-seconds}")
     private int timeoutSeconds;
 
-    /** 一次分类全部子问题；只有 NO_MATCH 才走全库，歧义仍走 CLARIFY。 */
-    @TimeAnnotation(method = "批量意图路由")
-    public List<IntentResultDTO> identify(List<String> subQuestions) {
-        if (subQuestions == null || subQuestions.isEmpty()) {
-            return List.of();
-        }
-        // 数据库和本地配置错误正常抛出，不伪装成模型路由失败。
-        List<KnowledgeCatalogDTO> catalog = loadCatalog();
+    /** 单个子问题独立路由，后端关联下标；模型失败仅降级当前子问题。 */
+    @TimeAnnotation(method = "单问题意图路由")
+    public IntentResultDTO identifyOne(String question, int index, List<KnowledgeCatalogDTO> catalog) {
         Set<Long> allowedIds = catalog.stream().map(KnowledgeCatalogDTO::getKbId)
                 .collect(Collectors.toSet());
-        Call call = httpClient.newCall(getRequest(subQuestions, catalog));
+        // 本地请求构造和超时配置错误正常抛出，不伪装成模型调用失败。
+        Call call = httpClient.newCall(getRequest(question, catalog));
         call.timeout().timeout(timeoutSeconds, TimeUnit.SECONDS);
         try (Response response = call.execute()) {
             ResponseBody body = response.body();
@@ -71,16 +68,17 @@ public class Identify {
             }
             String content = choice.getAsJsonObject("message").get("content").getAsString();
             IntentRespDTO result = gson.fromJson(content, IntentRespDTO.class);
-            return validateResults(result, subQuestions.size(), allowedIds);
+            return validateResult(result, index, allowedIds);
         } catch (Exception e) {
-            log.warn("模型意图路由失败，降级为 NO_MATCH 全库检索，异常类型：{}",
-                    e.getClass().getSimpleName());
-            return fallbackResults(subQuestions.size());
+            log.warn("子问题 {} 模型意图路由失败，降级为 NO_MATCH，异常类型：{}",
+                    index, e.getClass().getSimpleName());
+            return new IntentResultDTO().setIndex(index)
+                    .setIntent(IntentEnum.NO_MATCH).setKbIds(List.of());
         }
     }
 
-    /** 一次查询知识库表；模型按名称和业务描述选库，不读取文档目录或正文。 */
-    private List<KnowledgeCatalogDTO> loadCatalog() {
+    /** 只查询知识库的名称和描述；目录供同一轮的各个子问题共享。 */
+    public List<KnowledgeCatalogDTO> loadCatalog() {
         return baseMapper.selectList(Wrappers.<KnowledgeBaseDO>lambdaQuery()
                         .select(KnowledgeBaseDO::getId, KnowledgeBaseDO::getName, KnowledgeBaseDO::getDescription)
                         .orderByAsc(KnowledgeBaseDO::getId)).stream()
@@ -89,16 +87,9 @@ public class Identify {
                 .toList();
     }
 
-    private Request getRequest(List<String> subQuestions, List<KnowledgeCatalogDTO> catalog) {
-        JsonArray questions = new JsonArray();
-        for (int i = 0; i < subQuestions.size(); i++) {
-            JsonObject question = new JsonObject();
-            question.addProperty("index", i);
-            question.addProperty("question", subQuestions.get(i));
-            questions.add(question);
-        }
+    private Request getRequest(String question, List<KnowledgeCatalogDTO> catalog) {
         JsonObject input = new JsonObject();
-        input.add("subQuestions", questions);
+        input.addProperty("question", question);
         input.add("knowledgeBases", gson.toJsonTree(catalog));
         JsonArray messages = new JsonArray();
         JsonObject system = new JsonObject();
@@ -116,6 +107,7 @@ public class Identify {
         body.addProperty("stream", false);
         body.addProperty("max_tokens", maxTokens);
         body.addProperty("temperature", temperature);
+        body.addProperty("enable_thinking", false);
         JsonObject responseFormat = new JsonObject();
         responseFormat.addProperty("type", "json_object");
         body.add("response_format", responseFormat);
@@ -124,40 +116,18 @@ public class Identify {
                 .post(RequestBody.create(body.toString(), JSON)).build();
     }
 
-    private List<IntentResultDTO> validateResults(IntentRespDTO response, int count, Set<Long> allowedIds) {
-        if (response == null || response.getItems() == null || response.getItems().size() != count) {
-            throw new IllegalStateException("意图路由结果数量不完整");
+    private IntentResultDTO validateResult(IntentRespDTO response, int index, Set<Long> allowedIds) {
+        if (response == null || response.getIntent() == null || response.getKbIds() == null) {
+            throw new IllegalStateException("意图路由结果不完整");
         }
-        Map<Integer, IntentResultDTO> byIndex = new HashMap<>();
-        for (IntentResultDTO item : response.getItems()) {
-            if (item == null || item.getIndex() == null || item.getIndex() < 0 || item.getIndex() >= count
-                    || item.getIntent() == null || item.getKbIds() == null
-                    || byIndex.putIfAbsent(item.getIndex(), item) != null) {
-                throw new IllegalStateException("意图路由返回了无效下标或分类");
+        List<Long> ids = response.getKbIds().stream().distinct().toList();
+        if (response.getIntent() == IntentEnum.KNOWLEDGE) {
+            if (ids.isEmpty() || !allowedIds.containsAll(ids)) {
+                throw new IllegalStateException("意图路由返回了无效知识库");
             }
-            List<Long> ids = item.getKbIds().stream().distinct().toList();
-            if (item.getIntent() == IntentEnum.KNOWLEDGE) {
-                if (ids.isEmpty() || !allowedIds.containsAll(ids)) {
-                    throw new IllegalStateException("意图路由返回了无效知识库");
-                }
-            } else if (!ids.isEmpty()) {
-                throw new IllegalStateException("CHAT、CLARIFY、NO_MATCH 不能携带知识库 ID");
-            }
-            item.setKbIds(ids);
+        } else if (!ids.isEmpty()) {
+            throw new IllegalStateException("CHAT、CLARIFY、NO_MATCH 不能携带知识库 ID");
         }
-        List<IntentResultDTO> results = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            results.add(byIndex.get(i));
-        }
-        return results;
-    }
-
-    private List<IntentResultDTO> fallbackResults(int count) {
-        List<IntentResultDTO> results = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            results.add(new IntentResultDTO().setIndex(i)
-                    .setIntent(IntentEnum.NO_MATCH).setKbIds(List.of()));
-        }
-        return results;
+        return new IntentResultDTO().setIndex(index).setIntent(response.getIntent()).setKbIds(ids);
     }
 }

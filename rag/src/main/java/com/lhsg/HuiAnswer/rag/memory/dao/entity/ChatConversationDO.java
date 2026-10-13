@@ -11,7 +11,7 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 用户会话；归属与知识库访问权限由业务校验。 */
+/** 用户会话；按用户归属，不绑定知识库，检索范围由每次问题的路由决定。 */
 @Data
 @Accessors(chain = true)
 @TableName("t_chat_conversation")
@@ -21,9 +21,6 @@ public class ChatConversationDO {
 
     /** 用户 ID */
     private Long userId;
-
-    /** 本会话固定使用的知识库。 */
-    private Long kbId;
 
     private String title;
 

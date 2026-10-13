@@ -16,6 +16,9 @@ public class KnowledgeBaseDO {
     /** 知识库名称 */
     private String name;
 
+    /** 知识库业务范围，供模型选库；旧数据可以为空字符串。 */
+    private String description;
+
     /** 创建者的管理员 ID；历史未记录的数据为空，更新时不修改 */
     @TableField(updateStrategy = FieldStrategy.NEVER)
     private Long createdBy;

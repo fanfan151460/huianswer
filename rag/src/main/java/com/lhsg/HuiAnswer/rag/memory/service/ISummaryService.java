@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.memory.Conversation.service;
+package com.lhsg.HuiAnswer.rag.memory.service;
 
 import com.lhsg.HuiAnswer.rag.memory.dto.search.SearchMemoryDTO;
 import com.lhsg.HuiAnswer.rag.memory.dto.search.SearchSummaryMemoryDTO;

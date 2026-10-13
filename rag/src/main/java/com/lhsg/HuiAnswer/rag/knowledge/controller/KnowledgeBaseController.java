@@ -36,7 +36,7 @@ public class KnowledgeBaseController {
         return Results.success(knowledgeBaseService.getBase(id));
     }
 
-    /** 修改知识库名称。 */
+    /** 修改知识库名称和业务描述。 */
     @PutMapping("/{id}")
     public Result<KnowledgeBaseRespDTO> updateBase(@PathVariable("id") Long id,
                                                    @Valid @RequestBody UpdateBaseReqDTO updateBaseReqDTO) {

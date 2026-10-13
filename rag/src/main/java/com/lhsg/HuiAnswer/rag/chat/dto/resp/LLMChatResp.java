@@ -1,11 +1,10 @@
-package com.lhsg.HuiAnswer.rag.chat.dto;
+package com.lhsg.HuiAnswer.rag.chat.dto.resp;
 
 import lombok.Data;
 import lombok.experimental.Accessors;
 
 import java.util.List;
 
-// TODO 以后模型健康度测评可能会用到
 @Data
 @Accessors(chain = true)
 public class LLMChatResp {

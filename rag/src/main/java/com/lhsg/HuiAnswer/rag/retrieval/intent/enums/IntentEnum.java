@@ -1,5 +1,8 @@
 package com.lhsg.HuiAnswer.rag.retrieval.intent.enums;
 
+/**
+ * 意图识别分类(CHAT,KNOWLEDGE,CLARIFY,NO_MATCH)
+ */
 public enum IntentEnum {
     CHAT("无需查询资料的寒暄、感谢或普通交流。"),
 

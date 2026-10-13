@@ -8,13 +8,13 @@ import lombok.experimental.Accessors;
 public class KeyWordChunks {
     /** 资料来源 */
     private String docName;
-    private long docId;
+    private Long docId;
 
     /** 检索片段文本 */
     private String content;
 
     /** 片段id */
-    private long chunkId;
+    private Long chunkId;
 
     /** 关键词分数 */
     private double keywordScore;

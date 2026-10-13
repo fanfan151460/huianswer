@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.memory.Conversation.service;
+package com.lhsg.HuiAnswer.rag.memory.service;
 
 import com.lhsg.HuiAnswer.rag.memory.dto.req.StoreDialogueDTO;
 import com.lhsg.HuiAnswer.rag.memory.dto.resp.MessageResp;
@@ -19,7 +19,7 @@ public interface IMessageService {
     /**
      * 同时保存问题和更新会话时间。
      */
-    int saveQuestion(Long conversationId, Long userId, long kbId, String question);
+    int saveQuestion(Long conversationId, Long userId, String question);
 
     /**
      * 持久化助手回答
@@ -35,7 +35,7 @@ public interface IMessageService {
     List<SearchMemoryDTO> getMemory(Long conversationId, Long userId);
 
     /**
-     * 返回最近${rag.search.turns}轮次的会话历史
+     * 返回最近${rag.memory.turns}轮次的会话历史
      * @param searchMemoryDTOs 会话历史
      */
     List<SearchMemoryDTO> getMaxMemory(List<SearchMemoryDTO> searchMemoryDTOs);

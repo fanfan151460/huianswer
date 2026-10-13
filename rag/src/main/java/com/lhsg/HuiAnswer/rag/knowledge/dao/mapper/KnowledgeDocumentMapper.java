@@ -10,11 +10,13 @@ import java.time.LocalDateTime;
 
 @Mapper
 public interface KnowledgeDocumentMapper extends BaseMapper<KnowledgeDocumentDO> {
-    /** 批量逻辑删除，同时更新审计时间。 */
+    /**
+     * 批量逻辑删除，同时更新审计时间。
+     */
     @Update("""
             UPDATE t_knowledge_document
             SET deleted = 1, update_time = #{updateTime}
             WHERE kb_id = #{kbId} AND deleted = 0
             """)
-    int markDeletedByKbId(@Param("kbId") Long kbId, @Param("updateTime") LocalDateTime updateTime);
+    void markDeletedByKbId(@Param("kbId") Long kbId, @Param("updateTime") LocalDateTime updateTime);
 }

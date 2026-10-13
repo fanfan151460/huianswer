@@ -173,6 +173,14 @@ Gson 2.13.1 的版本已由父 POM 管理，rag 子模块只声明依赖。参�
 脚本创建独立 huianswer 数据库，并在该库启用 vector 扩展、创建三张表；不修改 frag 和 ragent。
 重复执行可用于初始化空库；CREATE TABLE IF NOT EXISTS 不会升级已有表，后续字段变更要编写迁移 SQL。
 
+换机器时，在 huianswer 数据库按编号依次执行 sql/01～10，补齐管理员、创建者、对话及摘要等表字段。
+关键词检索字段已同步到 sql/01_knowledge.sql；已有库执行 sql/10_chunk_keyword_search.sql：
+- search_text：Java/HanLP 分词后写入，保留词序与重复词。
+- search_vector：根据 search_text 自动生成的 tsvector；配套 GIN 索引用于关键词匹配。
+
+迁移脚本可以重复执行，不会清空或覆盖旧片段。旧片段若没有分词结果，需重新上传并处理文档；
+新增字段本身不能为中文原文补出 HanLP 分词结果。当前本地库已有这两个字段和索引。
+
 ## 密钥和数据库密码
 
 真实值保存在 Windows 当前用户环境变量，不在代码、YAML 或 .env.example 中：

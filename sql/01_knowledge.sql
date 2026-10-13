@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS t_knowledge_chunk (
     chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
     content TEXT NOT NULL CHECK (btrim(content) <> ''),
     embedding vector(4096) NOT NULL,
+    search_text TEXT,
+    search_vector TSVECTOR GENERATED ALWAYS AS (
+        to_tsvector('simple', coalesce(search_text, ''))
+    ) STORED,
     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted SMALLINT NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
@@ -56,8 +60,12 @@ CREATE TABLE IF NOT EXISTS t_knowledge_chunk (
 COMMENT ON TABLE t_knowledge_chunk IS '文档片段：原文、归属和嵌入向量';
 COMMENT ON COLUMN t_knowledge_chunk.chunk_index IS '在文档中的序号，从 0 开始';
 COMMENT ON COLUMN t_knowledge_chunk.embedding IS '4096 维嵌入；问题和文档必须使用同一嵌入模型配置';
+COMMENT ON COLUMN t_knowledge_chunk.search_text IS 'HanLP 分词后的文本，空格分隔，保留词序和重复词';
+COMMENT ON COLUMN t_knowledge_chunk.search_vector IS '基于 search_text 自动生成的全文检索向量，Java 不直接写入';
 COMMENT ON COLUMN t_knowledge_chunk.deleted IS '通用逻辑删除标识；删除文档时按 doc_id 物理清理片段';
 CREATE INDEX IF NOT EXISTS idx_chunk_kb_active
     ON t_knowledge_chunk (kb_id) WHERE deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_chunk_search_vector
+    ON t_knowledge_chunk USING GIN (search_vector);
 -- uk_chunk_document_index 的左前缀 doc_id 同时用于按文档清理，不重复加索引。
 COMMIT;

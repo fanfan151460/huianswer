@@ -2,6 +2,7 @@ package com.lhsg.HuiAnswer.rag.retrieval.rerank;
 
 import com.google.gson.Gson;
 import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
+import com.lhsg.HuiAnswer.rag.config.ApiUrl;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.RerankReqDTO;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.RerankRespDTO;
@@ -31,20 +32,21 @@ import java.util.concurrent.TimeUnit;
 public class RerankChunks {
     private final OkHttpClient httpClient;
     private final Gson gson;
+    private final ApiUrl apiUrl;
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
-    @Value("${rag.ai.siliconflow.url}")
-    private String url;
     @Value("${rag.ai.siliconflow.api-key}")
     private String apiKey;
     @Value("${rag.ai.siliconflow.rerank-model}")
     private String rerankModel;
     @Value("${rag.rerank.timeout-seconds}")
     private int timeoutSeconds;
+    @Value("${rag.rerank.top-n}")
+    private int topN;
 
-    /** RRF 候选交给模型重排；请求失败时保留 RRF 的前 topN 个片段。 */
+    /** 合并候选交给模型重排；请求失败时按候选原顺序保留前 topN 个片段。 */
     @TimeAnnotation(method = "重编排")
-    public List<Reference> rerank(String question, List<Reference> candidates, int topN) {
+    public List<Reference> rerank(String question, List<Reference> candidates) {
         if (topN <= 0) {
             throw new IllegalArgumentException("topN 必须大于 0");
         }
@@ -56,7 +58,7 @@ public class RerankChunks {
             if (apiKey == null || apiKey.isBlank() || timeoutSeconds <= 0) {
                 throw new IllegalStateException("重排序配置不完整");
             }
-            Request request = getRequest(question, candidates, limit);
+            Request request = getRequest(question, candidates);
             Call call = httpClient.newCall(request);
             // 只限制这次重排序调用的总耗时，不改聊天客户端的流式读取设置。
             call.timeout().timeout(timeoutSeconds, TimeUnit.SECONDS);
@@ -66,30 +68,30 @@ public class RerankChunks {
                     throw new IOException("重排序接口返回 HTTP " + response.code());
                 }
                 RerankRespDTO resp = gson.fromJson(body.string(), RerankRespDTO.class);
-                return mapResults(resp, candidates, limit);
+                return mapResults(resp, candidates);
             }
         } catch (Exception e) {
             // 不打印请求头、完整请求或响应，避免把密钥和文档内容带进日志。
-            log.warn("重排序失败，使用 RRF 前 {} 个片段，异常类型：{}", limit, e.getClass().getSimpleName());
+            log.warn("重排序失败，按候选顺序保留前 {} 个片段，异常类型：{}", limit, e.getClass().getSimpleName());
             return new ArrayList<>(candidates.subList(0, limit));
         }
     }
 
-    private Request getRequest(String question, List<Reference> candidates, int topN) {
+    private Request getRequest(String question, List<Reference> candidates) {
         RerankReqDTO req = new RerankReqDTO()
                 .setModel(rerankModel)
                 .setQuery(question)
                 .setDocuments(candidates.stream().map(Reference::getContent).toList())
-                .setTopN(topN);
+                .setTopN(Math.min(topN, candidates.size()));
         String requestJson = gson.toJson(req);
         return new Request.Builder()
-                .url(url.replaceAll("/+$", "") + "/v1/rerank")
+                .url(apiUrl.rerankUrl())
                 .header("Authorization", "Bearer " + apiKey)
                 .post(RequestBody.create(requestJson, JSON))
                 .build();
     }
 
-    private List<Reference> mapResults(RerankRespDTO resp, List<Reference> candidates, int topN) {
+    private List<Reference> mapResults(RerankRespDTO resp, List<Reference> candidates) {
         if (resp == null || resp.getResults() == null || resp.getResults().isEmpty()) {
             throw new IllegalStateException("重排序未返回结果");
         }
@@ -101,7 +103,7 @@ public class RerankChunks {
                 throw new IllegalStateException("重排序返回了无效的片段下标");
             }
             reordered.add(candidates.get(index).setRerankScore(result.getRelevanceScore()));
-            if (reordered.size() == topN) {
+            if (reordered.size() == Math.min(topN, candidates.size())) {
                 break;
             }
         }

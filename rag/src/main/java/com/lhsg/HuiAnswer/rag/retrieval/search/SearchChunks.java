@@ -28,22 +28,27 @@ public class SearchChunks {
     private final KnowledgeChunkMapper chunkMapper;
     private final EmbeddingChunks embeddingChunks;
 
-    @Value("${rag.max-distance}")
+    @Value("${rag.search.max-distance}")
     private double maxDistance;
     @Value("${rag.rrf-k}")
     private int rrfK;
-    @Value("${rag.mix-search-count}")
+    @Value("${rag.search.mix-search-count}")
     private int mixSearchCount;
+    @Value("${rag.search.topK}")
+    private int topK;
 
     /**
-     * RRF 融合。两路排名比分之和排序取topK
+     * RRF 融合。kbIds 为 null 时检索全库；空集合不检索；否则只查选中的库。
      */
     @TimeAnnotation(method = "混合检索")
-    public List<Reference> mixSearch(long kbId, String question, int topK) {
-        List<Reference> vectorHits = vectorSearch(kbId, question, topK).stream()
+    public List<Reference> mixSearch(List<Long> kbIds, String question) {
+        if (kbIds != null && kbIds.isEmpty()) {
+            return List.of();
+        }
+        List<Reference> vectorHits = vectorSearch(kbIds, question).stream()
                 .map(this::toReference)
                 .toList();
-        List<Reference> keywordHits = searchKeyWord(kbId, question, topK).stream()
+        List<Reference> keywordHits = searchKeyWord(kbIds, question).stream()
                 .map(this::toReference)
                 .toList();
 
@@ -63,9 +68,12 @@ public class SearchChunks {
     /**
      * 向量检索，按余弦距离升序，丢掉距离过大的片段
      */
-    public List<VectorChunks> vectorSearch(long kbId, String question, int topK) {
+    public List<VectorChunks> vectorSearch(List<Long> kbIds, String question) {
+        if (kbIds != null && kbIds.isEmpty()) {
+            return List.of();
+        }
         float[] embedding = questionToVector(question);
-        return chunkMapper.vectorSearch(kbId, embedding, topK).stream()
+        return chunkMapper.vectorSearch(kbIds, embedding, topK).stream()
                 .filter(each -> each.getDistance() < maxDistance)
                 .collect(Collectors.toList());
     }
@@ -74,12 +82,15 @@ public class SearchChunks {
      * 关键词检索，按 ts_rank_cd 降序。分词后没有可用词时不查库：
      * 返回空集合取向量查询tok
      */
-    public List<KeyWordChunks> searchKeyWord(long kbId, String question, int topK) {
+    public List<KeyWordChunks> searchKeyWord(List<Long> kbIds, String question) {
+        if (kbIds != null && kbIds.isEmpty()) {
+            return List.of();
+        }
         String keyword = ToKeyWord.toKeyQuestion(question);
         if (keyword.isEmpty()) {
             return List.of();
         }
-        return chunkMapper.keySearch(kbId, keyword, topK);
+        return chunkMapper.keySearch(kbIds, keyword, topK);
     }
 
 

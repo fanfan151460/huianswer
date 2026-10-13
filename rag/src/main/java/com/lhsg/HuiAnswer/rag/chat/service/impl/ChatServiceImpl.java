@@ -11,26 +11,29 @@ import com.lhsg.HuiAnswer.framework.exception.RemoteException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.framework.result.errorcode.BaseErrorCode;
 import com.lhsg.HuiAnswer.rag.admin.user.UsersContext;
-import com.lhsg.HuiAnswer.rag.chat.dto.LLMChatResp;
-import com.lhsg.HuiAnswer.rag.chat.dto.NeedChunksResp;
-import com.lhsg.HuiAnswer.rag.chat.dto.ParseReferences;
-import com.lhsg.HuiAnswer.rag.chat.dto.QuestionReq;
+import com.lhsg.HuiAnswer.rag.chat.build.req.ChatRequest;
+import com.lhsg.HuiAnswer.rag.chat.build.req.Messages;
+import com.lhsg.HuiAnswer.rag.chat.dto.req.QuestionReq;
+import com.lhsg.HuiAnswer.rag.chat.dto.resp.LLMChatResp;
+import com.lhsg.HuiAnswer.rag.chat.dto.resp.NeedChunksResp;
 import com.lhsg.HuiAnswer.rag.chat.service.IChatService;
-import com.lhsg.HuiAnswer.rag.memory.Conversation.service.IConversationService;
-import com.lhsg.HuiAnswer.rag.memory.Conversation.service.IMessageService;
-import com.lhsg.HuiAnswer.rag.memory.Conversation.service.ISummaryService;
+import com.lhsg.HuiAnswer.rag.config.ApiUrl;
 import com.lhsg.HuiAnswer.rag.memory.dto.req.StoreDialogueDTO;
-import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
-import com.lhsg.HuiAnswer.rag.memory.dto.search.SearchMemoryDTO;
 import com.lhsg.HuiAnswer.rag.memory.dto.search.SearchSummaryMemoryDTO;
+import com.lhsg.HuiAnswer.rag.memory.service.IConversationService;
+import com.lhsg.HuiAnswer.rag.memory.service.IMessageService;
+import com.lhsg.HuiAnswer.rag.memory.service.ISummaryService;
+import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
+import com.lhsg.HuiAnswer.rag.retrieval.dto.RewriteResultDTO;
+import com.lhsg.HuiAnswer.rag.retrieval.dto.SubQuestionResultDTO;
+import com.lhsg.HuiAnswer.rag.retrieval.process.SubQuestionProcessor;
 import com.lhsg.HuiAnswer.rag.retrieval.rerank.RerankChunks;
-import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
+import com.lhsg.HuiAnswer.rag.retrieval.rewrite.RewriteQuestion;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import okio.BufferedSource;
-import org.jetbrains.annotations.NotNull;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,31 +42,36 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
-import static com.lhsg.HuiAnswer.rag.chat.dto.prompt.System.BASE_PROMPT;
+import static com.lhsg.HuiAnswer.rag.chat.build.request.BuildRequest.buildRequest;
+import static com.lhsg.HuiAnswer.rag.chat.build.request.IdentifyIndentForModel.isRag;
 import static com.lhsg.HuiAnswer.rag.constant.constant.HUI_ANSWER_LOCK_CONVERSATION;
+import static com.lhsg.HuiAnswer.rag.retrieval.intent.enums.IntentEnum.CHAT;
+import static com.lhsg.HuiAnswer.rag.retrieval.intent.enums.IntentEnum.CLARIFY;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class ChatServiceImpl implements IChatService {
-    private final SearchChunks searchChecks;
+    private final SubQuestionProcessor subQuestionProcessor;
     private final RerankChunks rerankChunks;
+    private final RewriteQuestion rewriteQuestion;
     private final OkHttpClient httpClient;
     private final Gson gson;
     private final IMessageService messageService;
     private final RedissonClient redissonClient;
     private final IConversationService conversationService;
     private final ISummaryService summaryService;
+
+    private final ApiUrl apiUrl;
     @Resource(name = "chatExecutor")
     private ThreadPoolExecutor chatExecutor;
     @Resource(name = "memorySummaryExecutor")
@@ -73,35 +81,25 @@ public class ChatServiceImpl implements IChatService {
 
     @Value("${rag.ai.siliconflow.chat-model}")
     private String chatModel;
-    @Value("${rag.topK}")
-    private int topK;
-    @Value("${rag.rerank.top-n}")
-    private int rerankTopN;
-    @Value("${rag.ai.siliconflow.url}")
-    private String url;
     @Value("${rag.ai.siliconflow.api-key}")
     private String apiKey;
     @Value("${rag.chat.max-model-wait}")
     private Long modelWait;
     @Value("${rag.chat.answer-max-tokens}")
     private int answerMaxTokens;
-    @Value("${rag.chat.answer-temperature}")
-    private double answerTemperature;
 
     @Override
     public void chat(QuestionReq req, SseEmitter emitter) {
-        // 首字延迟从这里起算：包含建会话、检索、重排和模型首 token 的全部等待。
-        long startNanos = System.nanoTime();
         Long userId = UsersContext.requireUserId();
-        if (req.getKbId() <= 0 || StrUtil.isBlank(req.getQuestion())) {
-            throw new ClientException("请选择知识库并输入问题");
+        if (StrUtil.isBlank(req.getQuestion())) {
+            throw new ClientException("请输入问题");
         }
         Long conversationId = req.getConversationId();
         if (conversationId != null && conversationId <= 0) {
             throw new ClientException("会话 ID 不正确");
         }
         if (conversationId == null) {
-            conversationId = conversationService.addConversation(req.getKbId(), req.getQuestion());
+            conversationId = conversationService.addConversation(req.getQuestion());
             req.setConversationId(conversationId);
         }
         if (!conversationService.ifYourConversation(conversationId)) {
@@ -115,12 +113,13 @@ public class ChatServiceImpl implements IChatService {
             // Controller 先返回 emitter，模型调用和发送事件由线程池继续执行。
             chatExecutor.execute(() -> {
                 try {
-                    List<NeedChunksResp> needChunks = chatStream(req, emitter, userId, startNanos);
-                    // 检查是否压缩对话
+                    chatStream(req, emitter, userId);
+                    // 检查是否需要压缩对话
                     memorySummaryExecutor.execute(() -> summaryService.addSummary(req.getConversationId(), userId));
+                    // 正文已由 delta 推完，done 只作结束信号；无 data 的事件浏览器不会派发。
                     emitter.send(SseEmitter.event()
                             .name("done")
-                            .data(needChunks, APPLICATION_JSON));
+                            .data("[DONE]"));
                     emitter.complete();
                 } catch (Exception e) {
                     sendError(emitter, userMessage(e));
@@ -134,8 +133,13 @@ public class ChatServiceImpl implements IChatService {
         }
     }
 
+    private void linking(AtomicBoolean closed) {
+        if (closed.get()) {
+            throw new ServiceException("流式连接已关闭");
+        }
+    }
     @Override
-    public List<NeedChunksResp> chatStream(QuestionReq req, SseEmitter emitter, Long userId, long startNanos) {
+    public void chatStream(QuestionReq req, SseEmitter emitter, Long userId) {
         RLock conversationLock = redissonClient.getLock(HUI_ANSWER_LOCK_CONVERSATION.formatted(req.getConversationId()));
         Integer turnNo = null;
         // 放在读取方法外，断流或异常时也能保存已生成的正文和模型统计。
@@ -165,38 +169,37 @@ public class ChatServiceImpl implements IChatService {
         }
         try {
             emitter.send(SseEmitter.event().comment("connected"));
-            if (closed.get()) {
-                throw new ServiceException("流式连接已关闭");
-            }
-
+            linking(closed);
             // 持久化用户问题到信息表并返回此次对话轮次
-            turnNo = messageService.saveQuestion(req.getConversationId(), userId,
-                    req.getKbId(), req.getQuestion());
-
             String question = req.getQuestion();
-            List<Reference> references = searchChecks.mixSearch(req.getKbId(), question, topK);
-            if (closed.get()) {
-                throw new ServiceException("流式连接已关闭");
+            turnNo = messageService.saveQuestion(req.getConversationId(), userId, question);
+            // 读取历史以及摘要
+            SearchSummaryMemoryDTO history = summaryService.summaryMemory(req.getConversationId(), userId);
+            linking(closed);
+            // 一次完成问题改写与拆分
+            RewriteResultDTO rewriteResult = rewriteQuestion.rewrite(question, history.getMemory());
+            linking(closed);
+            // 所有子问题并行意图路由和检索
+            List<SubQuestionResultDTO> results = subQuestionProcessor.process(rewriteResult.getSubQuestions());
+            linking(closed);
+            // 合并、去重多路召回的片段
+            List<Reference> references = mergeReferences(results);
+            // 使用完整改写问题进行一次全局重排序
+            if (!references.isEmpty()) {
+                references = rerankChunks.rerank(rewriteResult.getRewrittenQuestion(), references);
+                linking(closed);
             }
-            if (references.isEmpty()) {
-                throw new ClientException("未检索到知识库或知识库资料为空");
-            }
-            references = rerankChunks.rerank(question, references, rerankTopN);
-            if (closed.get()) {
-                throw new ServiceException("流式连接已关闭");
-            }
-            // 获取请求体和本次参考资料
-            ParseReferences parsed = getBodyAndResp(question, references, req.getConversationId(), userId);
-            List<NeedChunksResp> needChunks = parsed.getNeedChunks();
-            // 回答参考资料
-            resp.setNeedChunks(needChunks);
-            JsonObject body = parsed.getBody();
-            body.addProperty("stream", true);
+            // 原始输入、历史和统一资料交给模型；意图结果仅用于后端决定检索路径。
+            Messages messages = new Messages().setHistory(history)
+                    .setReferences(references).setQuestion(question);
+            ChatRequest chatRequest = new ChatRequest().setMessages(messages)
+                    .setThinking(isRag(results))
+                    .setTemperature(isRag(results) ? 0.3 : 0.8)
+                    .setModel(chatModel).setMaxTokens(answerMaxTokens);
+            JsonObject body = buildRequest(chatRequest);
             Call call = httpClient.newCall(getRequest(body));
             activeCall.set(call);
-            if (closed.get()) {
-                throw new ServiceException("流式连接已关闭");
-            }
+            linking(closed);
             // 建立模型连接开始读取回答响应，之前先检查用户是否已经关闭防止额外计费
             call.timeout().timeout(modelWait, TimeUnit.SECONDS);
             try (Response response = call.execute()) {
@@ -204,13 +207,12 @@ public class ChatServiceImpl implements IChatService {
                 if (!response.isSuccessful() || responseBody == null) {
                     throw new ServiceException("模型连接失败");
                 }
-                readStream(responseBody, resp, answer, emitter, startNanos);
-                if (closed.get()) {
-                    throw new ServiceException("流式连接已关闭");
-                }
+                // 解析响应
+                readStream(responseBody, resp, answer, emitter);
+                linking(closed);
                 // 持久化对话到信息表中为对话历史
+                resp.setNeedChunks(toSources(references));
                 messageService.storeDialogue(toStoreDTO(req, userId, turnNo, resp, "success", null));
-                return needChunks;
             }
         } catch (Exception e) {
             boolean aborted = closed.get() || e instanceof ClientGoneException;
@@ -259,11 +261,10 @@ public class ChatServiceImpl implements IChatService {
      * 一条 SSE 事件以空行结束；data 可以有多行，先拼完整事件再解析 JSON。
      */
     private void readStream(ResponseBody body, LLMChatResp resp, StringBuilder answer,
-                            SseEmitter emitter, long startNanos) throws IOException {
+                            SseEmitter emitter) throws IOException {
         StringBuilder eventData = new StringBuilder();
         BufferedSource source = body.source();
         String line;
-        boolean firstTokenLogged = false;
         while ((line = source.readUtf8Line()) != null) {
             if (line.isEmpty()) {
                 if (eventData.isEmpty()) {
@@ -274,12 +275,7 @@ public class ChatServiceImpl implements IChatService {
                 if ("[DONE]".equals(data)) {
                     break;
                 }
-                int before = answer.length();
                 readChunk(data, resp, answer, emitter);
-                if (!firstTokenLogged && answer.length() > before) {
-                    firstTokenLogged = true;
-                    log.info("[首字延迟] {} ms", (System.nanoTime() - startNanos) / 1_000_000);
-                }
             } else if (line.startsWith("data:")) {
                 String data = line.substring(5);
                 if (data.startsWith(" ")) {
@@ -291,13 +287,12 @@ public class ChatServiceImpl implements IChatService {
                 eventData.append(data);
             }
         }
+        resp.setAnswer(answer.toString());
         // 截断(length)也算生成完成：正文是完整的，只是没写完，存 success 并留在历史里。
-        // 其余情况（含 finishReason 为 null，即流被掐断）才算失败。
         String finishReason = resp.getFinishReason();
         if (!"stop".equals(finishReason) && !"length".equals(finishReason)) {
             throw new ServiceException("模型回答异常终止");
         }
-        resp.setAnswer(answer.toString());
     }
 
     private void readChunk(String data, LLMChatResp resp, StringBuilder answer,
@@ -345,80 +340,43 @@ public class ChatServiceImpl implements IChatService {
         }
     }
 
-    /** 写回前端失败，用于和「上游模型出错」区分开。 */
+    /** 写回前端失败，用于和“上游模型出错”区分开。 */
     private static final class ClientGoneException extends RuntimeException {
         ClientGoneException(Throwable cause) {
             super(cause);
         }
     }
 
-    private ParseReferences getBodyAndResp(String question, List<Reference> references, Long conversationId,
-                                          Long userId) {
-        StringBuilder contextBuilder = new StringBuilder();
-        List<NeedChunksResp> needChunksRespList = new ArrayList<>();
-        for (int j = 0; j < references.size(); j++) {
-            int num = j + 1;
-            Reference reference = references.get(j);
-            String docName = reference.getDocName();
-            long docId = reference.getDocId();
-            contextBuilder.append("【%s】[%s]%s".formatted(docName, num, reference.getContent()))
-                    .append("\n");
-            needChunksRespList.add(new NeedChunksResp(num, docId, docName, reference.getChunkId()));
+    /** 各子问题候选按 chunkId 去重，再按 RRF 分数粗排。 */
+    private List<Reference> mergeReferences(List<SubQuestionResultDTO> results) {
+        Map<Long, Reference> merged = new HashMap<>();
+        for (SubQuestionResultDTO result : results) {
+            if (result.getIntent().equals(CHAT) || result.getIntent().equals(CLARIFY)) {
+                continue;
+            }
+            for (Reference reference : result.getReferences()) {
+                merged.putIfAbsent(reference.getChunkId(), reference);
+            }
         }
-        String context = contextBuilder.toString();
-        JsonObject body = new JsonObject();
-        JsonArray input = getJsonElements(question, context, conversationId, userId);
-        body.addProperty("model", chatModel);
-        body.add("messages", input);
-        body.addProperty("temperature", answerTemperature);
-        body.addProperty("max_tokens", answerMaxTokens);
-        body.addProperty("stream", false);
-        return new ParseReferences(body, needChunksRespList);
+        if (merged.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return merged.values().stream()
+                .sorted(Comparator.comparingDouble(Reference::getScore).reversed())
+                .collect(Collectors.toList());
     }
 
-    @NotNull
-    private JsonArray getJsonElements(String question, String context, Long conversationId,
-                                      Long userId) {
-        JsonArray input = new JsonArray();
-        JsonObject system = new JsonObject();
-        JsonObject reference = new JsonObject();
-        JsonObject user = new JsonObject();
-        system.addProperty("role", "system");
-        system.addProperty("content", BASE_PROMPT);
-        reference.addProperty("role", "user");
-        reference.addProperty("content", "【参考资料】" + context);
-        user.addProperty("role", "user");
-        user.addProperty("content", question);
-        input.add(system);
-        SearchSummaryMemoryDTO history = summaryService.summaryMemory(conversationId, userId);
-        if (StrUtil.isNotBlank(history.getSummary())) {
-            JsonObject summary = new JsonObject();
-            summary.addProperty("role", "user");
-            summary.addProperty("content", "【历史摘要，仅用于理解上下文，不作为本次事实或引用依据】" + history.getSummary());
-            input.add(summary);
-        }
-        for (SearchMemoryDTO memoryDTO : history.getMemory()) {
-            if (memoryDTO.getRole().equals("user")) {
-                JsonObject users = new JsonObject();
-                users.addProperty("role", "user");
-                users.addProperty("content", memoryDTO.getContent());
-                input.add(users);
-            }
-            if (memoryDTO.getRole().equals("assistant")) {
-                JsonObject assistants = new JsonObject();
-                assistants.addProperty("role", "assistant");
-                assistants.addProperty("content", memoryDTO.getContent());
-                input.add(assistants);
-            }
-        }
-        input.add(reference);
-        input.add(user);
-        return input;
+    /** 入库用的出处列表：只做字段映射，不带编号一类的展示格式。 */
+    private static List<NeedChunksResp> toSources(List<Reference> references) {
+        return references.stream()
+                .map(reference -> new NeedChunksResp(reference.getDocId(), reference.getDocName(),
+                        reference.getChunkId()))
+                .toList();
     }
 
     private Request getRequest(JsonObject body) {
         Request.Builder request = new Request.Builder()
-                .url(url + "/v1/chat/completions")
+                .url(apiUrl.chatCompletionsUrl())
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Authorization", "Bearer " + apiKey)
                 .post(RequestBody.create(body.toString(), JSON));

@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.chat.dto;
+package com.lhsg.HuiAnswer.rag.chat.dto.req;
 
 import lombok.Data;
 
@@ -7,8 +7,6 @@ public class QuestionReq {
     /** 用户问题 */
     private String question;
 
-    /** 选择知识库 */
-    private long kbId;
 
     /** 会话id；不传表示新会话。 */
     private Long conversationId;

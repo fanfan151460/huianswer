@@ -1,14 +1,14 @@
 package com.lhsg.HuiAnswer.rag.retrieval.process;
 
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
-import com.lhsg.HuiAnswer.rag.config.EmitterPoolConfig;
+import com.lhsg.HuiAnswer.rag.config.ThreadPoolConfig;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.IntentResultDTO;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.KnowledgeCatalogDTO;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.SubQuestionResultDTO;
 import com.lhsg.HuiAnswer.rag.retrieval.intent.Identify;
 import com.lhsg.HuiAnswer.rag.retrieval.intent.enums.IntentEnum;
-import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
+import com.lhsg.HuiAnswer.rag.knowledge.search.SearchChunks;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,7 +33,7 @@ class SubQuestionProcessorTest {
 
     @BeforeEach
     void setUp() {
-        executor = new EmitterPoolConfig().subQuestionExecutor();
+        executor = new ThreadPoolConfig().subQuestionExecutor();
         processor = new SubQuestionProcessor(identify, search);
         ReflectionTestUtils.setField(processor, "subQuestionExecutor", executor);
         when(identify.loadCatalog()).thenReturn(catalog);

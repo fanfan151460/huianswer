@@ -85,7 +85,6 @@ public class UserServiceImpl implements IUserService {
         return new UserRespDTO().setToken(token);
     }
 
-    // TODO username 唯一索引
     @Override
     public void register(UserRegisterReqDTO loginReqDTO) {
         if (loginReqDTO == null || StrUtil.isBlank(loginReqDTO.getUsername()) || StrUtil.isBlank(loginReqDTO.getPassword())) {

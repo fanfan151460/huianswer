@@ -93,12 +93,21 @@ public class SummaryServiceImpl implements ISummaryService {
                 .setMemory(messageService.getMaxMemory(remaining));
     }
 
+    // TODO 后续如果需要智能概括标题需要在这里判断时候首轮即可
     @TimeAnnotation(method = "压缩摘要所需时间")
     public void addSummary(Long conversationId, Long userId) {
         RLock lock = redissonClient.getLock(HUI_ANSWER_LOCK_SUMMARY.formatted(conversationId));
         lock.lock();
         try {
             if (!ifSummary) {
+                return;
+            }
+            // 排队任务拿到摘要锁时，会话可能已被删除，直接跳过。
+            ChatConversationDO conversation = chatConversationMapper.selectOne(
+                    Wrappers.<ChatConversationDO>lambdaQuery()
+                            .eq(ChatConversationDO::getId, conversationId)
+                            .eq(ChatConversationDO::getUserId, userId));
+            if (conversation == null) {
                 return;
             }
             List<SearchMemoryDTO> memory = messageService.getMemory(conversationId, userId);

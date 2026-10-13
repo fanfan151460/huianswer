@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
  * 问答相关的异步线程池
  */
 @Configuration
-public class EmitterPoolConfig {
+public class ThreadPoolConfig {
 
     // 流式输出上下文
     @Bean(destroyMethod = "shutdown", name = "chatExecutor")
@@ -50,4 +50,6 @@ public class EmitterPoolConfig {
                 new ThreadPoolExecutor.AbortPolicy()
         );
     }
+
+    // 概括标题线程池
 }

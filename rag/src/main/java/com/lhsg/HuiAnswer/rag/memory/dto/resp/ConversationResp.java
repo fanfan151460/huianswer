@@ -7,8 +7,8 @@ import java.time.LocalDateTime;
 
 @Data
 @Accessors(chain = true)
-public class ListConversationResp {
-    private long id;
+public class ConversationResp {
+    private Long id;
 
     private String title;
 

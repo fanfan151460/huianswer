@@ -13,13 +13,17 @@ import java.util.List;
 
 @Mapper
 public interface KnowledgeChunkMapper extends BaseMapper<KnowledgeChunkDO> {
-    /** 物理删除文档的全部片段，包含已经逻辑删除的片段。 */
+    /**
+     * 物理删除文档的全部片段，包含已经逻辑删除的片段。
+     */
     @Delete("DELETE FROM t_knowledge_chunk WHERE doc_id = #{docId}")
-    int deletePhysicallyByDocId(@Param("docId") Long docId);
+    void deletePhysicallyByDocId(@Param("docId") Long docId);
 
-    /** 物理删除知识库的全部片段，包含已经逻辑删除的片段。 */
+    /**
+     * 物理删除知识库的全部片段，包含已经逻辑删除的片段。
+     */
     @Delete("DELETE FROM t_knowledge_chunk WHERE kb_id = #{kbId}")
-    int deletePhysicallyByKbId(@Param("kbId") Long kbId);
+    void deletePhysicallyByKbId(@Param("kbId") Long kbId);
 
     /** kbIds 为 null 表示全库；空集合不检索；有 ID 时只检索选中的库。 */
     @Select("""

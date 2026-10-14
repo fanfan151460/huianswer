@@ -11,9 +11,11 @@ import com.lhsg.HuiAnswer.framework.exception.RemoteException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.framework.result.errorcode.BaseErrorCode;
 import com.lhsg.HuiAnswer.rag.admin.user.UsersContext;
-import com.lhsg.HuiAnswer.rag.chat.build.req.ChatRequest;
-import com.lhsg.HuiAnswer.rag.chat.build.req.Messages;
+import com.lhsg.HuiAnswer.rag.chat.build.message.ChatRequest;
+import com.lhsg.HuiAnswer.rag.chat.build.message.Messages;
 import com.lhsg.HuiAnswer.rag.chat.dto.req.QuestionReq;
+import com.lhsg.HuiAnswer.rag.chat.build.task.ChatGenerationTask;
+import com.lhsg.HuiAnswer.rag.chat.build.task.ChatGenerationManager;
 import com.lhsg.HuiAnswer.rag.chat.dto.resp.LLMChatResp;
 import com.lhsg.HuiAnswer.rag.chat.dto.resp.NeedChunksResp;
 import com.lhsg.HuiAnswer.rag.chat.service.IChatService;
@@ -46,8 +48,6 @@ import java.util.*;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import static com.lhsg.HuiAnswer.rag.chat.build.request.BuildRequest.buildRequest;
@@ -72,6 +72,7 @@ public class ChatServiceImpl implements IChatService {
     private final ISummaryService summaryService;
 
     private final ApiUrl apiUrl;
+    private final ChatGenerationManager generationManager;
     @Resource(name = "chatExecutor")
     private ThreadPoolExecutor chatExecutor;
     @Resource(name = "memorySummaryExecutor")
@@ -105,62 +106,87 @@ public class ChatServiceImpl implements IChatService {
         if (!conversationService.ifYourConversation(conversationId)) {
             throw new ClientException("会话信息有误");
         }
+        ChatGenerationTask task = generationManager.register(userId, conversationId, emitter);
+        // 在返回 emitter、提交线程池前登记回调，覆盖排队期间结束连接的情况。
+        emitter.onCompletion(() -> task.cancel("流式连接已关闭"));
+        emitter.onError(error -> task.cancel("流式连接已关闭"));
+        emitter.onTimeout(() -> {
+            task.cancel("流式连接超时");
+            emitter.complete();
+        });
         try {
-            // 在提交模型任务前返回会话 ID，后续生成失败或线程池繁忙也能关联到本次会话。
-            emitter.send(SseEmitter.event()
-                    .name("meta")
-                    .data(Map.of("conversationId", conversationId), APPLICATION_JSON));
-            // Controller 先返回 emitter，模型调用和发送事件由线程池继续执行。
-            chatExecutor.execute(() -> {
-                try {
-                    chatStream(req, emitter, userId);
-                    // 检查是否需要压缩对话
-                    memorySummaryExecutor.execute(() -> summaryService.addSummary(req.getConversationId(), userId));
-                    // 正文已由 delta 推完，done 只作结束信号；无 data 的事件浏览器不会派发。
-                    emitter.send(SseEmitter.event()
-                            .name("done")
-                            .data("[DONE]"));
-                    emitter.complete();
-                } catch (Exception e) {
-                    sendError(emitter, userMessage(e));
-                }
-            });
+            emitter.send(SseEmitter.event().name("meta")
+                    .data(Map.of("conversationId", conversationId,
+                            "generationId", task.getGenerationId()), APPLICATION_JSON));
+            chatExecutor.execute(() -> runGeneration(req, task));
         } catch (IOException e) {
-            // meta 未能写出时结束连接，不再提交模型任务。
+            generationManager.finish(task);
             emitter.completeWithError(e);
         } catch (RejectedExecutionException e) {
+            generationManager.finish(task);
             sendError(emitter, "服务繁忙，请稍后再试");
+        } catch (Exception e) {
+            generationManager.finish(task);
+            sendError(emitter, userMessage(e));
         }
     }
 
-    private void linking(AtomicBoolean closed) {
-        if (closed.get()) {
-            throw new ServiceException("流式连接已关闭");
+    @Override
+    public void stop(Long conversationId, String generationId) {
+        Long userId = UsersContext.requireUserId();
+        if (conversationId == null || conversationId <= 0
+                || !conversationService.ifYourConversation(conversationId)) {
+            throw new ClientException("会话不存在或无权访问");
+        }
+        generationManager.requestStop(userId, conversationId, generationId);
+    }
+
+    private void runGeneration(QuestionReq req, ChatGenerationTask task) {
+        SseEmitter emitter = task.getEmitter();
+        try {
+            generationManager.checkStopped(task);
+            chatStream(req, task);
+            emitter.send(SseEmitter.event().name("done").data("[DONE]"));
+            emitter.complete();
+            try {
+                memorySummaryExecutor.execute(() ->
+                        summaryService.addSummary(task.getConversationId(), task.getUserId()));
+            } catch (RejectedExecutionException e) {
+                // 正文已成功落库、发送完成，摘要排队失败不改成问答失败。
+                log.warn("摘要线程池繁忙，conversationId={}", task.getConversationId());
+            }
+        } catch (Exception e) {
+            if (task.getStopped().get()) {
+                sendStopped(task);
+            } else {
+                sendError(emitter, userMessage(e));
+            }
+        } finally {
+            generationManager.finish(task);
         }
     }
-    @Override
-    public void chatStream(QuestionReq req, SseEmitter emitter, Long userId) {
-        RLock conversationLock = redissonClient.getLock(HUI_ANSWER_LOCK_CONVERSATION.formatted(req.getConversationId()));
+
+    private void sendStopped(ChatGenerationTask task) {
+        try {
+            task.getEmitter().send(SseEmitter.event().name("stopped")
+                    .data(Map.of("generationId", task.getGenerationId(),
+                            "message", task.getStopReason()), APPLICATION_JSON));
+            task.getEmitter().complete();
+        } catch (Exception ignored) {
+            // 连接已经关闭时，停止记录仍由工作线程保存。
+        }
+    }
+
+    private void chatStream(QuestionReq req, ChatGenerationTask task) {
+        SseEmitter emitter = task.getEmitter();
+        Long userId = task.getUserId();
+        RLock conversationLock = redissonClient.getLock(
+                HUI_ANSWER_LOCK_CONVERSATION.formatted(task.getConversationId()));
         Integer turnNo = null;
-        // 放在读取方法外，断流或异常时也能保存已生成的正文和模型统计。
+        boolean answerStored = false;
+        // 正文及模型统计只由工作线程维护，停止接口不跨线程入库。
         LLMChatResp resp = new LLMChatResp().setModel(chatModel).setNeedChunks(List.of());
         StringBuilder answer = new StringBuilder();
-        AtomicBoolean closed = new AtomicBoolean();
-        AtomicReference<Call> activeCall = new AtomicReference<>();
-        // 容器回调与读取任务运行在不同线程，原子变量用于传递关闭状态和当前模型请求。
-        Runnable cancelCall = () -> {
-            closed.set(true);
-            Call call = activeCall.get();
-            if (call != null) {
-                call.cancel();
-            }
-        };
-        emitter.onCompletion(cancelCall);
-        emitter.onError(error -> cancelCall.run());
-        emitter.onTimeout(() -> {
-            cancelCall.run();
-            emitter.complete();
-        });
 
         // 加锁和解锁都在当前工作线程，不能在容器回调中跨线程解锁。
         boolean locked = conversationLock.tryLock();
@@ -169,25 +195,26 @@ public class ChatServiceImpl implements IChatService {
         }
         try {
             emitter.send(SseEmitter.event().comment("connected"));
-            linking(closed);
+            task.checkStopped();
             // 持久化用户问题到信息表并返回此次对话轮次
             String question = req.getQuestion();
             turnNo = messageService.saveQuestion(req.getConversationId(), userId, question);
             // 读取历史以及摘要
             SearchSummaryMemoryDTO history = summaryService.summaryMemory(req.getConversationId(), userId);
-            linking(closed);
+            task.checkStopped();
             // 一次完成问题改写与拆分
             RewriteResultDTO rewriteResult = rewriteQuestion.rewrite(question, history.getMemory());
-            linking(closed);
+            task.checkStopped();
             // 所有子问题并行意图路由和检索
             List<SubQuestionResultDTO> results = subQuestionProcessor.process(rewriteResult.getSubQuestions());
-            linking(closed);
+            task.checkStopped();
             // 合并、去重多路召回的片段
             List<Reference> references = mergeReferences(results);
+            task.checkStopped();
             // 使用完整改写问题进行一次全局重排序
             if (!references.isEmpty()) {
                 references = rerankChunks.rerank(rewriteResult.getRewrittenQuestion(), references);
-                linking(closed);
+                task.checkStopped();
             }
             // 原始输入、历史和统一资料交给模型；意图结果仅用于后端决定检索路径。
             Messages messages = new Messages().setHistory(history)
@@ -197,30 +224,37 @@ public class ChatServiceImpl implements IChatService {
                     .setTemperature(isRag(results) ? 0.3 : 0.8)
                     .setModel(chatModel).setMaxTokens(answerMaxTokens);
             JsonObject body = buildRequest(chatRequest);
+            generationManager.checkStopped(task);
             Call call = httpClient.newCall(getRequest(body));
-            activeCall.set(call);
-            linking(closed);
-            // 建立模型连接开始读取回答响应，之前先检查用户是否已经关闭防止额外计费
             call.timeout().timeout(modelWait, TimeUnit.SECONDS);
+            task.bindCall(call);
             try (Response response = call.execute()) {
                 ResponseBody responseBody = response.body();
                 if (!response.isSuccessful() || responseBody == null) {
                     throw new ServiceException("模型连接失败");
                 }
                 // 解析响应
-                readStream(responseBody, resp, answer, emitter);
-                linking(closed);
-                // 持久化对话到信息表中为对话历史
+                readStream(responseBody, resp, answer, task);
+                generationManager.checkStopped(task);
                 resp.setNeedChunks(toSources(references));
+                task.beginCompletion();
                 messageService.storeDialogue(toStoreDTO(req, userId, turnNo, resp, "success", null));
+                answerStored = true;
             }
         } catch (Exception e) {
-            boolean aborted = closed.get() || e instanceof ClientGoneException;
-            cancelCall.run();
+            if (answerStored) {
+                // 已提交的成功回答不因迟到的关闭异常再插一条失败记录。
+                log.debug("回答已保存，忽略后续关闭异常");
+                return;
+            }
+            boolean aborted = task.getStopped().get() || e instanceof ClientGoneException;
+            if (e instanceof ClientGoneException) {
+                task.cancel("流式连接已关闭");
+            }
             resp.setAnswer(answer.toString());
             // 保存对话失败记录
             if (turnNo != null) {
-                String message = aborted ? "流式连接已关闭"
+                String message = aborted ? task.getStopReason()
                         : e instanceof AbstractException ae ? ae.getErrorMessage() : "回答生成失败，请稍后再试";
                 try {
                     messageService.storeDialogue(toStoreDTO(req, userId, turnNo, resp, "failed", message));
@@ -231,8 +265,8 @@ public class ChatServiceImpl implements IChatService {
                 }
             }
             if (aborted) {
-                log.debug("流式问答中止：连接已关闭");
-                throw new ServiceException("流式连接已关闭");
+                log.debug("流式问答中止：{}", task.getStopReason());
+                throw new ServiceException(task.getStopReason());
             }
             if (e instanceof AbstractException ae) {
                 throw ae;
@@ -243,7 +277,11 @@ public class ChatServiceImpl implements IChatService {
             }
             throw new RemoteException("模型服务暂时不可用，请稍后再试", e, BaseErrorCode.REMOTE_ERROR);
         } finally {
-            conversationLock.unlock();
+            try {
+                task.finish();
+            } finally {
+                conversationLock.unlock();
+            }
         }
     }
 
@@ -261,11 +299,15 @@ public class ChatServiceImpl implements IChatService {
      * 一条 SSE 事件以空行结束；data 可以有多行，先拼完整事件再解析 JSON。
      */
     private void readStream(ResponseBody body, LLMChatResp resp, StringBuilder answer,
-                            SseEmitter emitter) throws IOException {
+                            ChatGenerationTask task) throws IOException {
         StringBuilder eventData = new StringBuilder();
         BufferedSource source = body.source();
-        String line;
-        while ((line = source.readUtf8Line()) != null) {
+        while (true) {
+            task.checkStopped();
+            String line = source.readUtf8Line();
+            if (line == null) {
+                break;
+            }
             if (line.isEmpty()) {
                 if (eventData.isEmpty()) {
                     continue;
@@ -275,7 +317,7 @@ public class ChatServiceImpl implements IChatService {
                 if ("[DONE]".equals(data)) {
                     break;
                 }
-                readChunk(data, resp, answer, emitter);
+                readChunk(data, resp, answer, task.getEmitter());
             } else if (line.startsWith("data:")) {
                 String data = line.substring(5);
                 if (data.startsWith(" ")) {

@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.chat.build.req;
+package com.lhsg.HuiAnswer.rag.chat.build.message;
 
 import lombok.Data;
 import lombok.experimental.Accessors;

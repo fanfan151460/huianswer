@@ -2,6 +2,11 @@ package com.lhsg.HuiAnswer.rag.chat.controller;
 
 import com.lhsg.HuiAnswer.framework.duplicate.NoDuplicateSubmit;
 import com.lhsg.HuiAnswer.rag.chat.dto.req.QuestionReq;
+import com.lhsg.HuiAnswer.rag.chat.dto.req.StopGenerationReq;
+import com.lhsg.HuiAnswer.framework.result.Result;
+import com.lhsg.HuiAnswer.framework.result.Results;
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.PathVariable;
 import com.lhsg.HuiAnswer.rag.chat.service.IChatService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,5 +33,13 @@ public class ChatController {
         SseEmitter emitter = new SseEmitter(sseWait);
         chatService.chat(req, emitter);
         return emitter;
+    }
+
+    @NoDuplicateSubmit
+    @PostMapping("/api/hui-answer/conversation/{conversationId}/stop")
+    public Result<Void> stop(@PathVariable("conversationId") Long conversationId,
+                             @Valid @RequestBody StopGenerationReq req) {
+        chatService.stop(conversationId, req.getGenerationId());
+        return Results.success();
     }
 }

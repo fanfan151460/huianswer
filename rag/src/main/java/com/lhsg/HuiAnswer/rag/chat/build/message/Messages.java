@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.chat.build.req;
+package com.lhsg.HuiAnswer.rag.chat.build.message;
 
 import com.lhsg.HuiAnswer.rag.memory.dto.search.SearchSummaryMemoryDTO;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;

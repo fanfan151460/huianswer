@@ -128,7 +128,6 @@ public class ConversationImpl implements IConversationService {
         }
     }
 
-    // TODO redis缓存改进
     public Boolean ifYourConversation(Long conversationId) {
         Long userId = UsersContext.requireUserId();
         ChatConversationDO chatConversationDO = chatConversationMapper.selectOne(Wrappers.<ChatConversationDO>lambdaQuery().eq(ChatConversationDO::getUserId, userId)

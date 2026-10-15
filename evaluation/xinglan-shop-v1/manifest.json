@@ -1,0 +1,333 @@
+{
+  "dataset_id": "xinglan-shop-v1",
+  "version": "1.0",
+  "created_date": "2026-10-15",
+  "synthetic": true,
+  "encoding": "UTF-8 without BOM",
+  "newline": "CRLF",
+  "business_timezone": "Asia/Shanghai",
+  "knowledge_base_count": 4,
+  "document_count": 16,
+  "case_count": 40,
+  "split_counts": {
+    "dev": 20,
+    "holdout": 20
+  },
+  "category_counts": {
+    "chat": 2,
+    "clarify": 3,
+    "cross_kb": 6,
+    "multi_turn": 4,
+    "paraphrase": 6,
+    "single_fact": 16,
+    "unanswerable": 3
+  },
+  "retrieval_scorable_count": 32,
+  "evaluation_status": "not_run",
+  "initial_comparison_final_top_k": 6,
+  "evidence_identity": "source_id + section_id; independent of database chunk ids",
+  "documents": [
+    {
+      "source_id": "P01",
+      "kb_key": "products",
+      "title": "产品目录与选型",
+      "path": "corpus/products/P01_产品目录与选型.txt",
+      "section_ids": [
+        "P01-01",
+        "P01-02",
+        "P01-03",
+        "P01-04",
+        "P01-05",
+        "P01-06",
+        "P01-07"
+      ],
+      "chars_lf": 1938,
+      "bytes": 4589,
+      "sha256": "96db61e6b81c2785f709ed05f5a1d634f0ff2c1bfcf504acd872ef540eb8a6a8"
+    },
+    {
+      "source_id": "P02",
+      "kb_key": "products",
+      "title": "配件兼容与供电",
+      "path": "corpus/products/P02_配件兼容与供电.txt",
+      "section_ids": [
+        "P02-01",
+        "P02-02",
+        "P02-03",
+        "P02-04",
+        "P02-05",
+        "P02-06",
+        "P02-07"
+      ],
+      "chars_lf": 1757,
+      "bytes": 4441,
+      "sha256": "3395f12eb9e768933a35c71943f404ab6ac70d473a3ab1d7c4dfba9ed94a5888"
+    },
+    {
+      "source_id": "P03",
+      "kb_key": "products",
+      "title": "操作保养与滤芯复位",
+      "path": "corpus/products/P03_操作保养与滤芯复位.txt",
+      "section_ids": [
+        "P03-01",
+        "P03-02",
+        "P03-03",
+        "P03-04",
+        "P03-05",
+        "P03-06",
+        "P03-07"
+      ],
+      "chars_lf": 1660,
+      "bytes": 4357,
+      "sha256": "954cc5441b2a176131c07fb919813a757296ffd2d6291f8f30d5dde8af33ca08"
+    },
+    {
+      "source_id": "P04",
+      "kb_key": "products",
+      "title": "错误码与故障排查",
+      "path": "corpus/products/P04_错误码与故障排查.txt",
+      "section_ids": [
+        "P04-01",
+        "P04-02",
+        "P04-03",
+        "P04-04",
+        "P04-05",
+        "P04-06",
+        "P04-07"
+      ],
+      "chars_lf": 1641,
+      "bytes": 4238,
+      "sha256": "91360d1dae26e3eaf3af50430234ee3dda86fb0277b04cde626100a26ede62be"
+    },
+    {
+      "source_id": "O01",
+      "kb_key": "orders",
+      "title": "下单支付与订单状态",
+      "path": "corpus/orders/O01_下单支付与订单状态.txt",
+      "section_ids": [
+        "O01-01",
+        "O01-02",
+        "O01-03",
+        "O01-04",
+        "O01-05",
+        "O01-06",
+        "O01-07"
+      ],
+      "chars_lf": 1636,
+      "bytes": 4629,
+      "sha256": "36d34792b4b2e311efee241b72afa7e6f45b0764c63fa3c0da06a650ecb8d25d"
+    },
+    {
+      "source_id": "O02",
+      "kb_key": "orders",
+      "title": "订单取消与修改",
+      "path": "corpus/orders/O02_订单取消与修改.txt",
+      "section_ids": [
+        "O02-01",
+        "O02-02",
+        "O02-03",
+        "O02-04",
+        "O02-05",
+        "O02-06",
+        "O02-07"
+      ],
+      "chars_lf": 1641,
+      "bytes": 4694,
+      "sha256": "cac00a673dc79a5f9d60015589aaafafb500674b1000ca8821404dbc3de4274c"
+    },
+    {
+      "source_id": "O03",
+      "kb_key": "orders",
+      "title": "退款发起与到账",
+      "path": "corpus/orders/O03_退款发起与到账.txt",
+      "section_ids": [
+        "O03-01",
+        "O03-02",
+        "O03-03",
+        "O03-04",
+        "O03-05",
+        "O03-06",
+        "O03-07"
+      ],
+      "chars_lf": 1606,
+      "bytes": 4559,
+      "sha256": "fe9bf9076efca17a9b666de0c37b8f1a68d3f8c618fd1b5dc5bb9f208fb47ee6"
+    },
+    {
+      "source_id": "O04",
+      "kb_key": "orders",
+      "title": "发票与交易凭证",
+      "path": "corpus/orders/O04_发票与交易凭证.txt",
+      "section_ids": [
+        "O04-01",
+        "O04-02",
+        "O04-03",
+        "O04-04",
+        "O04-05",
+        "O04-06",
+        "O04-07"
+      ],
+      "chars_lf": 1592,
+      "bytes": 4539,
+      "sha256": "59605d047f15e21d19da98f54cc7e690bb032f6a4dbe78ce465472880d3e7134"
+    },
+    {
+      "source_id": "D01",
+      "kb_key": "shipping",
+      "title": "配送范围与时效",
+      "path": "corpus/shipping/D01_配送范围与时效.txt",
+      "section_ids": [
+        "D01-01",
+        "D01-02",
+        "D01-03",
+        "D01-04",
+        "D01-05",
+        "D01-06",
+        "D01-07"
+      ],
+      "chars_lf": 1656,
+      "bytes": 4671,
+      "sha256": "0f72d1d52de35be49b454456341a754a60b59e1531d4c15f54714389295f0c57"
+    },
+    {
+      "source_id": "D02",
+      "kb_key": "shipping",
+      "title": "配送运费与拆包",
+      "path": "corpus/shipping/D02_配送运费与拆包.txt",
+      "section_ids": [
+        "D02-01",
+        "D02-02",
+        "D02-03",
+        "D02-04",
+        "D02-05",
+        "D02-06",
+        "D02-07"
+      ],
+      "chars_lf": 1620,
+      "bytes": 4441,
+      "sha256": "d4f0834cb0070e63cb797205a4b231786c77a147e67963b0b478dec17657c739"
+    },
+    {
+      "source_id": "D03",
+      "kb_key": "shipping",
+      "title": "派送地址与包裹拦截",
+      "path": "corpus/shipping/D03_派送地址与包裹拦截.txt",
+      "section_ids": [
+        "D03-01",
+        "D03-02",
+        "D03-03",
+        "D03-04",
+        "D03-05",
+        "D03-06",
+        "D03-07"
+      ],
+      "chars_lf": 1602,
+      "bytes": 4573,
+      "sha256": "d639011e184bff46f05d2884ee091c8d6ab63c02f57a62fa98145181edcd7dfb"
+    },
+    {
+      "source_id": "D04",
+      "kb_key": "shipping",
+      "title": "签收检查与物流异常",
+      "path": "corpus/shipping/D04_签收检查与物流异常.txt",
+      "section_ids": [
+        "D04-01",
+        "D04-02",
+        "D04-03",
+        "D04-04",
+        "D04-05",
+        "D04-06",
+        "D04-07"
+      ],
+      "chars_lf": 1652,
+      "bytes": 4673,
+      "sha256": "02a8f1a902104c9d48fbc16a8e6653f9b3b6f71aef055cf28569018b6058c59a"
+    },
+    {
+      "source_id": "S01",
+      "kb_key": "aftersales",
+      "title": "退换货适用条件",
+      "path": "corpus/aftersales/S01_退换货适用条件.txt",
+      "section_ids": [
+        "S01-01",
+        "S01-02",
+        "S01-03",
+        "S01-04",
+        "S01-05",
+        "S01-06",
+        "S01-07"
+      ],
+      "chars_lf": 1519,
+      "bytes": 4372,
+      "sha256": "bffd5e7c632e577e2c76b45b2007ba06f1269d7a688e76cb26705ea62004d1cd"
+    },
+    {
+      "source_id": "S02",
+      "kb_key": "aftersales",
+      "title": "售后申请与寄回",
+      "path": "corpus/aftersales/S02_售后申请与寄回.txt",
+      "section_ids": [
+        "S02-01",
+        "S02-02",
+        "S02-03",
+        "S02-04",
+        "S02-05",
+        "S02-06",
+        "S02-07"
+      ],
+      "chars_lf": 1543,
+      "bytes": 4444,
+      "sha256": "41ae13b35619087b1ac280a52842e36bf82e816f332f4a629716889ca8a02b71"
+    },
+    {
+      "source_id": "S03",
+      "kb_key": "aftersales",
+      "title": "售后费用与退款范围",
+      "path": "corpus/aftersales/S03_售后费用与退款范围.txt",
+      "section_ids": [
+        "S03-01",
+        "S03-02",
+        "S03-03",
+        "S03-04",
+        "S03-05",
+        "S03-06",
+        "S03-07"
+      ],
+      "chars_lf": 1556,
+      "bytes": 4483,
+      "sha256": "442b1805e2d12e1133bb58f388c8a7a83841cab4fbac020d36954b0464afbbe9"
+    },
+    {
+      "source_id": "S04",
+      "kb_key": "aftersales",
+      "title": "保修与维修",
+      "path": "corpus/aftersales/S04_保修与维修.txt",
+      "section_ids": [
+        "S04-01",
+        "S04-02",
+        "S04-03",
+        "S04-04",
+        "S04-05",
+        "S04-06",
+        "S04-07"
+      ],
+      "chars_lf": 1524,
+      "bytes": 4267,
+      "sha256": "5d38917c75768eaf6ee03f7ed70f2c5206587cb3b6e1cd05e222a8afaa6f9f93"
+    }
+  ],
+  "case_files": [
+    {
+      "path": "cases/all.jsonl",
+      "sha256": "bc930c70261dda6aa12e37d7200f21e291e052b477d2b4e7c96d81bf06fccf54"
+    },
+    {
+      "path": "cases/dev.jsonl",
+      "sha256": "5d4e914c4339f9236e16c61a66e7784fc2faa68fce1ac5cae5aa480de37e7c9a"
+    },
+    {
+      "path": "cases/holdout.jsonl",
+      "sha256": "41c4e5b7f34ce8047b2b10e0f5cd99176b30023f8fd955f0bfb55d33760a6073"
+    }
+  ]
+}

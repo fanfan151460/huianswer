@@ -8,7 +8,7 @@ import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.SubQuestionResultDTO;
 import com.lhsg.HuiAnswer.rag.retrieval.intent.Identify;
 import com.lhsg.HuiAnswer.rag.retrieval.intent.enums.IntentEnum;
-import com.lhsg.HuiAnswer.rag.knowledge.search.SearchChunks;
+import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

@@ -3,7 +3,6 @@ package com.lhsg.HuiAnswer.rag.retrieval.search;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.embedding.EmbeddingChunks;
-import com.lhsg.HuiAnswer.rag.knowledge.search.SearchChunks;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.mapping.BoundSql;
 import org.apache.ibatis.mapping.SqlSource;

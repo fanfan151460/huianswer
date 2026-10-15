@@ -7,7 +7,7 @@ import com.lhsg.HuiAnswer.rag.retrieval.dto.Reference;
 import com.lhsg.HuiAnswer.rag.retrieval.dto.SubQuestionResultDTO;
 import com.lhsg.HuiAnswer.rag.retrieval.intent.Identify;
 import com.lhsg.HuiAnswer.rag.retrieval.intent.enums.IntentEnum;
-import com.lhsg.HuiAnswer.rag.knowledge.search.SearchChunks;
+import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

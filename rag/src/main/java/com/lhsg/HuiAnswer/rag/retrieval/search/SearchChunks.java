@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.knowledge.search;
+package com.lhsg.HuiAnswer.rag.retrieval.search;
 
 import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;

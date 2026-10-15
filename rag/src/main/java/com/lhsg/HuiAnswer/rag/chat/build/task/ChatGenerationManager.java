@@ -4,8 +4,12 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RTopic;
+import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -20,6 +24,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static com.lhsg.HuiAnswer.rag.constant.constant.STOP_KEY;
+import static com.lhsg.HuiAnswer.rag.constant.constant.STOP_TOPIC;
 import static com.lhsg.HuiAnswer.rag.constant.constant.TASK_KEY;
 
 @Component
@@ -28,7 +33,10 @@ import static com.lhsg.HuiAnswer.rag.constant.constant.TASK_KEY;
 public class ChatGenerationManager {
     private final StringRedisTemplate redis;
     private final Gson gson;
+    private final RedissonClient redissonClient;
     private final ConcurrentHashMap<String, ChatGenerationTask> tasks = new ConcurrentHashMap<>();
+    private RTopic stopTopic;
+    private Integer stopListenerId;
 
     @Value("${rag.chat.generation-ttl-seconds:600}")
     private long generationTtlSeconds = 600;
@@ -36,13 +44,31 @@ public class ChatGenerationManager {
     private long maxSseMillis = 300000;
 
     @PostConstruct
-    private void validateConfiguration() {
+    void init() {
         if (generationTtlSeconds <= 0
                 || Duration.ofSeconds(generationTtlSeconds).toMillis() <= maxSseMillis) {
             throw new IllegalArgumentException("生成任务TTL必须大于SSE连接时限");
         }
+        // 每个实例订阅同一频道，只取消存在于本实例的生成任务。
+        stopTopic = redissonClient.getTopic(STOP_TOPIC, StringCodec.INSTANCE);
+        stopListenerId = stopTopic.addListener(String.class,
+                (channel, generationId) -> cancelLocalTask(generationId));
     }
 
+    @PreDestroy
+    void removeStopListener() {
+        if (stopTopic != null && stopListenerId != null) {
+            try {
+                // 只移除本管理器注册的监听，不影响其他订阅者。
+                stopTopic.removeListener(stopListenerId);
+                stopListenerId = null;
+            } catch (Exception e) {
+                log.warn("移除生成停止监听失败，异常类型：{}", e.getClass().getSimpleName());
+            }
+        }
+    }
+
+    // 注册任务
     public ChatGenerationTask register(Long userId, Long conversationId, SseEmitter emitter) {
         ChatGenerationTask task = new ChatGenerationTask()
                 .setGenerationId(UUID.randomUUID().toString())
@@ -73,8 +99,19 @@ public class ChatGenerationManager {
         }
         redis.opsForValue().set(STOP_KEY.formatted(id), "1",
                 Duration.ofSeconds(generationTtlSeconds));
-        // 在同一个示例直接取消
-        ChatGenerationTask localTask = tasks.get(id);
+        // 同实例立即取消；跨实例通过订阅通知取消。
+        cancelLocalTask(id);
+        try {
+            stopTopic.publish(id);
+        } catch (Exception e) {
+            // 停止标记已写入，发布失败仍可由定时扫描补处理。
+            log.warn("发布生成停止通知失败，generationId={}，异常类型：{}",
+                    id, e.getClass().getSimpleName());
+        }
+    }
+
+    private void cancelLocalTask(String generationId) {
+        ChatGenerationTask localTask = tasks.get(generationId);
         if (localTask != null) {
             localTask.cancel();
         }
@@ -89,8 +126,8 @@ public class ChatGenerationManager {
         task.checkStopped();
     }
 
-    /** 单个调度任务扫描本实例的活动生成，能取消正在阻塞读取的最终 Call。 */
-    @Scheduled(fixedDelayString = "${rag.chat.stop-check-interval-ms:1000}")
+    /** 低频扫描兜底：补处理发布失败或订阅断线时漏掉的停止通知。 */
+    @Scheduled(fixedDelayString = "${rag.chat.stop-check-interval-ms:5000}")
     public void checkRemoteStops() {
         List<ChatGenerationTask> snapshot = new ArrayList<>(tasks.values());
         if (snapshot.isEmpty()) {

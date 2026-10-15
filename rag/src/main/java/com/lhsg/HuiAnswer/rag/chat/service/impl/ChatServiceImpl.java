@@ -152,7 +152,6 @@ public class ChatServiceImpl implements IChatService {
                 memorySummaryExecutor.execute(() ->
                         summaryService.addSummary(task.getConversationId(), task.getUserId()));
             } catch (RejectedExecutionException e) {
-                // 正文已成功落库、发送完成，摘要排队失败不改成问答失败。
                 log.warn("摘要线程池繁忙，conversationId={}", task.getConversationId());
             }
         } catch (Exception e) {
@@ -183,7 +182,6 @@ public class ChatServiceImpl implements IChatService {
         RLock conversationLock = redissonClient.getLock(
                 HUI_ANSWER_LOCK_CONVERSATION.formatted(task.getConversationId()));
         Integer turnNo = null;
-        boolean answerStored = false;
         // 正文及模型统计只由工作线程维护，停止接口不跨线程入库。
         LLMChatResp resp = new LLMChatResp().setModel(chatModel).setNeedChunks(List.of());
         StringBuilder answer = new StringBuilder();
@@ -237,16 +235,11 @@ public class ChatServiceImpl implements IChatService {
                 readStream(responseBody, resp, answer, task);
                 generationManager.checkStopped(task);
                 resp.setNeedChunks(toSources(references));
+                // 标记结果为已完成
                 task.beginCompletion();
                 messageService.storeDialogue(toStoreDTO(req, userId, turnNo, resp, "success", null));
-                answerStored = true;
             }
         } catch (Exception e) {
-            if (answerStored) {
-                // 已提交的成功回答不因迟到的关闭异常再插一条失败记录。
-                log.debug("回答已保存，忽略后续关闭异常");
-                return;
-            }
             boolean aborted = task.getStopped().get() || e instanceof ClientGoneException;
             if (e instanceof ClientGoneException) {
                 task.cancel("流式连接已关闭");
@@ -303,6 +296,7 @@ public class ChatServiceImpl implements IChatService {
         StringBuilder eventData = new StringBuilder();
         BufferedSource source = body.source();
         while (true) {
+            // 打断下一行的读取，如果缓冲区有数据，cancel不会取消连接必须依靠检查标志位直接停止
             task.checkStopped();
             String line = source.readUtf8Line();
             if (line == null) {

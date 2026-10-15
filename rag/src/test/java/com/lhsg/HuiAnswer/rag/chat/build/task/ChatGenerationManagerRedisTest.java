@@ -10,9 +10,13 @@ import okhttp3.Request;
 import okhttp3.Response;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.redisson.Redisson;
+import org.redisson.api.RTopic;
+import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 import org.redisson.spring.data.connection.RedissonConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -31,6 +35,8 @@ import static org.mockito.Mockito.*;
 class ChatGenerationManagerRedisTest {
     private static RedissonConnectionFactory connectionFactory;
     private static StringRedisTemplate redis;
+    private static RedissonClient redissonA;
+    private static RedissonClient redissonB;
     private final List<ChatGenerationTask> created = new ArrayList<>();
     private ChatGenerationManager instanceA;
     private ChatGenerationManager instanceB;
@@ -41,7 +47,10 @@ class ChatGenerationManagerRedisTest {
         config.setThreads(1).setNettyThreads(2);
         config.useSingleServer().setAddress("redis://127.0.0.1:16479")
                 .setConnectionMinimumIdleSize(1).setConnectionPoolSize(4).setRetryAttempts(0);
-        connectionFactory = new RedissonConnectionFactory(config);
+        // 两个独立客户端模拟两实例各自持有的订阅连接。
+        redissonA = Redisson.create(config);
+        redissonB = Redisson.create(config);
+        connectionFactory = new RedissonConnectionFactory(redissonA);
         connectionFactory.afterPropertiesSet();
         redis = new StringRedisTemplate(connectionFactory);
         redis.afterPropertiesSet();
@@ -49,18 +58,36 @@ class ChatGenerationManagerRedisTest {
 
     @AfterAll
     static void closeRedis() throws Exception {
-        connectionFactory.destroy();
+        try {
+            if (connectionFactory != null) {
+                connectionFactory.destroy();
+            }
+        } finally {
+            if (redissonA != null) {
+                redissonA.shutdown();
+            }
+            if (redissonB != null) {
+                redissonB.shutdown();
+            }
+        }
     }
 
     @BeforeEach
     void createInstances() {
-        instanceA = new ChatGenerationManager(redis, new Gson());
-        instanceB = new ChatGenerationManager(redis, new Gson());
+        instanceA = new ChatGenerationManager(redis, new Gson(), redissonA);
+        instanceB = new ChatGenerationManager(redis, new Gson(), redissonB);
+        instanceA.init();
+        instanceB.init();
     }
 
     @AfterEach
     void cleanOnlyOwnedKeys() {
-        created.forEach(instanceA::finish);
+        try {
+            instanceA.removeStopListener();
+            instanceB.removeStopListener();
+        } finally {
+            created.forEach(instanceA::finish);
+        }
     }
 
     @Test
@@ -80,11 +107,9 @@ class ChatGenerationManagerRedisTest {
         verify(selectedCall, never()).cancel();
 
         instanceB.requestStop(9L, 1L, selected.getGenerationId());
-        assertFalse(selected.getStopped().get(), "B 不能直接操作 A 的本地对象");
-        instanceA.checkRemoteStops();
-
+        // 不运行扫描：A 必须通过订阅收到 B 发布的通知。
+        verify(selectedCall, timeout(3000).times(1)).cancel();
         assertTrue(selected.getStopped().get());
-        verify(selectedCall).cancel();
         verify(otherCall, never()).cancel();
         assertFalse(other.getStopped().get());
     }
@@ -152,8 +177,8 @@ class ChatGenerationManagerRedisTest {
             assertFalse(readResult.isDone());
 
             instanceB.requestStop(9L, 1L, task.getGenerationId());
-            instanceA.checkRemoteStops();
 
+            // 不运行扫描，订阅回调应直接取消正在阻塞读取的 Call。
             assertTrue(readResult.get(3, TimeUnit.SECONDS));
             assertTrue(call.isCanceled());
         } finally {
@@ -163,6 +188,47 @@ class ChatGenerationManagerRedisTest {
             reader.shutdownNow();
             http.connectionPool().evictAll();
             http.dispatcher().executorService().shutdownNow();
+        }
+    }
+
+    @Test
+    void missedNotificationIsRecoveredByTheFallbackScan() {
+        ChatGenerationTask task = register();
+        Call call = mock(Call.class);
+        task.bindCall(call);
+        // 模拟 A 暂时没有订阅连接，B 发布的通知无法到达 A。
+        instanceA.removeStopListener();
+
+        instanceB.requestStop(9L, 1L, task.getGenerationId());
+        assertFalse(task.getStopped().get());
+        verify(call, never()).cancel();
+
+        instanceA.checkRemoteStops();
+
+        assertTrue(task.getStopped().get());
+        verify(call).cancel();
+    }
+
+    @Test
+    void publishFailureKeepsTheStopFlagForTheFallbackScan() {
+        ChatGenerationTask task = register();
+        Call call = mock(Call.class);
+        task.bindCall(call);
+        RTopic actualTopic = (RTopic) ReflectionTestUtils.getField(instanceB, "stopTopic");
+        RTopic failedTopic = mock(RTopic.class);
+        when(failedTopic.publish(any())).thenThrow(new IllegalStateException("模拟发布失败"));
+        ReflectionTestUtils.setField(instanceB, "stopTopic", failedTopic);
+        try {
+            assertDoesNotThrow(() -> instanceB.requestStop(9L, 1L, task.getGenerationId()));
+            assertEquals("1", redis.opsForValue().get("huiAnswer:chat:stop:" + task.getGenerationId()));
+            assertFalse(task.getStopped().get());
+
+            instanceA.checkRemoteStops();
+
+            assertTrue(task.getStopped().get());
+            verify(call).cancel();
+        } finally {
+            ReflectionTestUtils.setField(instanceB, "stopTopic", actualTopic);
         }
     }
 

@@ -279,8 +279,10 @@ Content-Type: application/json
 停止请求同样带 username、token，校验会话与生成任务都属于当前用户。
 返回 code="0" 表示停止要求已提交，或本次任务已经结束；不代表跨实例任务在返回的一刻已经完成清理。
 
-- 单实例时立即设置本地停止标记并取消当前 Call；跨实例时通过共享 Redis 的停止标记传递。
-- 每个实例每秒批量检查自己正在运行的任务，发现停止要求后取消本地 Call。
+- 停止请求先写共享 Redis 停止标记，同实例立即取消当前 Call，再通过 Redisson RTopic 发布 generationId。
+- 每个实例启动时订阅 huiAnswer:chat:stop:notify 频道，收到通知后只取消自己持有的对应任务。
+- 普通发布订阅不补发断线期间的通知；每个实例每 5 秒批量检查自己的活动任务，补处理发布失败或漏掉的通知。
+- 应用关闭时只移除自己的订阅监听；订阅回调负责取消 Call，消息入库和释放锁由工作线程完成。
 - 已生成的部分正文按 failed 保存，errorMessage 为“用户停止生成”，不会作为完整成功轮次进入模型历史。
 - 工作线程负责消息入库、结束 SSE 和释放会话锁；停止接口不跨线程解锁。
 - 连接仍可写时发送 stopped 事件，包含 generationId、message；正常完成仍发送 done。
@@ -288,6 +290,6 @@ Content-Type: application/json
 - 任务结束时清理本地对象与 Redis 记录；任务记录 TTL 默认 600 秒，须大于 SSE 时限。
 - 当前主动取消最终流式模型 Call；正在进行的改写、检索和重排序在本阶段返回后检查停止标记。
 
-配置在 rag.chat：stop-check-interval-ms=1000、generation-ttl-seconds=600。
+配置在 rag.chat：stop-check-interval-ms=5000、generation-ttl-seconds=600。
 所有应用实例需要连接同一个 Redis；当前批量读取按共享单节点 Redis 实现。
 任务对象位于 chat/build/task/ChatGenerationTask，管理类为 ChatGenerationManager。

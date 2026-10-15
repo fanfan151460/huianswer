@@ -73,8 +73,8 @@ rag:
     # sse连接时长（ms）限制
     max-sse: 300000
     max-model-wait: 180
-    # 每个实例每秒批量读取自己的生成停止标记。
-    stop-check-interval-ms: 1000
+    # 停止由订阅通知触发；每 5 秒批量检查一次，补处理漏掉的通知。
+    stop-check-interval-ms: 5000
     # 须大于 SSE 时限，实例异常退出后也能自动回收任务记录。
     generation-ttl-seconds: 600
     # 单次回答的最大生成 token。撞到上限时 finish_reason=length，按成功处理并留在历史里。

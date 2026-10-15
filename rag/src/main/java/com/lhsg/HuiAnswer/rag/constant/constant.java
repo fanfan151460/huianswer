@@ -12,4 +12,6 @@ public class constant {
     public static final String TASK_KEY = "huiAnswer:chat:generation:%s";
 
     public static final String STOP_KEY = "huiAnswer:chat:stop:%s";
+
+    public static final String STOP_TOPIC = "huiAnswer:chat:stop:notify";
 }

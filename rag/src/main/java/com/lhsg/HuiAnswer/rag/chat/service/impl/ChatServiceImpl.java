@@ -143,9 +143,29 @@ public class ChatServiceImpl implements IChatService {
 
     private void runGeneration(QuestionReq req, ChatGenerationTask task) {
         SseEmitter emitter = task.getEmitter();
+        RLock conversationLock = null;
+        boolean locked = false;
         try {
-            generationManager.checkStopped(task);
-            chatStream(req, task);
+            try {
+                generationManager.checkStopped(task);
+                // 加锁和解锁都在当前工作线程，覆盖本轮问答及任务收尾。
+                conversationLock = redissonClient.getLock(
+                        HUI_ANSWER_LOCK_CONVERSATION.formatted(task.getConversationId()));
+                locked = conversationLock.tryLock();
+                if (!locked) {
+                    throw new ClientException("本会话正在生成回答，请等待结束后再提问");
+                }
+                chatStream(req, task);
+            } finally {
+                try {
+                    generationManager.finish(task);
+                } finally {
+                    if (locked) {
+                        conversationLock.unlock();
+                    }
+                }
+            }
+            // 收尾并解锁后发送结束标记，前端收到后即可继续提问。
             emitter.send(SseEmitter.event().name("done").data("[DONE]"));
             emitter.complete();
             try {
@@ -160,8 +180,6 @@ public class ChatServiceImpl implements IChatService {
             } else {
                 sendError(emitter, userMessage(e));
             }
-        } finally {
-            generationManager.finish(task);
         }
     }
 
@@ -179,18 +197,11 @@ public class ChatServiceImpl implements IChatService {
     private void chatStream(QuestionReq req, ChatGenerationTask task) {
         SseEmitter emitter = task.getEmitter();
         Long userId = task.getUserId();
-        RLock conversationLock = redissonClient.getLock(
-                HUI_ANSWER_LOCK_CONVERSATION.formatted(task.getConversationId()));
         Integer turnNo = null;
         // 正文及模型统计只由工作线程维护，停止接口不跨线程入库。
         LLMChatResp resp = new LLMChatResp().setModel(chatModel).setNeedChunks(List.of());
         StringBuilder answer = new StringBuilder();
 
-        // 加锁和解锁都在当前工作线程，不能在容器回调中跨线程解锁。
-        boolean locked = conversationLock.tryLock();
-        if (!locked) {
-            throw new ClientException("本会话正在生成回答，请等待结束后再提问");
-        }
         try {
             emitter.send(SseEmitter.event().comment("connected"));
             task.checkStopped();
@@ -269,12 +280,6 @@ public class ChatServiceImpl implements IChatService {
                 throw new ServiceException("模型服务响应超时，请稍后再试", e, BaseErrorCode.SERVICE_TIMEOUT_ERROR);
             }
             throw new RemoteException("模型服务暂时不可用，请稍后再试", e, BaseErrorCode.REMOTE_ERROR);
-        } finally {
-            try {
-                task.finish();
-            } finally {
-                conversationLock.unlock();
-            }
         }
     }
 

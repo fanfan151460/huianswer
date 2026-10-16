@@ -1,4 +1,4 @@
-"""用已有 Ragas 环境评测完整回答；只读采集文件，不调用业务接口。"""
+"""用同一次问答的实际资料评测检索与完整回答；只读采集文件，不调用业务接口。"""
 
 import argparse
 import asyncio
@@ -21,12 +21,12 @@ from score_retrieval import RecordingJudge, write_json
 from openai import AsyncOpenAI
 from ragas.cache import DiskCacheBackend
 from ragas.llms import llm_factory
-from ragas.metrics.collections import Faithfulness, FactualCorrectness
+from ragas.metrics.collections import ContextPrecision, ContextRecall, Faithfulness, FactualCorrectness
 from answer_point_coverage import score_answer_points
 
 
-METRICS = ("faithfulness", "answer_point_coverage", "factual_correctness")
-PROTOCOL_VERSION = "generation-v2"
+METRICS = ("context_recall", "context_precision", "faithfulness", "answer_point_coverage", "factual_correctness")
+PROTOCOL_VERSION = "generation-v3"
 DEFAULT_REFERENCES = Path(__file__).resolve().parent / "xinglan-shop-v1" / "cases" / "generation_reference_v2.json"
 
 
@@ -116,13 +116,20 @@ async def score_one(row, metrics, judge, api_key):
         result = {"status": "error", "score": None, "decisions": [], "error": None}
         start = time.perf_counter()
         try:
-            if name == "faithfulness" and not contexts:
+            if name in ("context_recall", "context_precision") and not row["retrieved_contexts"]:
+                # 知识问答有参考答案，最终资料为空即未召回；历史记录不能代替检索片段。
+                result.update(status="success", score=0.0, note="有参考答案，但最终检索片段为空")
+            elif name == "faithfulness" and not contexts:
                 result.update(status="skipped", error="没有检索资料或已有历史，忠实度不适用；事实正确性仍单独评分")
             elif name == "answer_point_coverage":
                 result.update(status="success", **(await score_answer_points(row, judge)))
             else:
                 metric = metrics[name]
-                if name == "faithfulness":
+                if name in ("context_recall", "context_precision"):
+                    # 只评本次 SSE 保存的最终资料，保留排序；不混入历史、答案或重新查询结果。
+                    scored = await metric.ascore(user_input=row["user_input"], reference=row["reference"],
+                                                 retrieved_contexts=row["retrieved_contexts"])
+                elif name == "faithfulness":
                     scored = await metric.ascore(user_input=row["user_input"], response=row["response"],
                                                  retrieved_contexts=contexts)
                 else:
@@ -166,7 +173,10 @@ def write_report(directory, rows, metadata):
     """易读报告只整理已有回答与判定，不追加模型请求。"""
     lines = ["# 生成评测报告", "",
              f"评分口径：{metadata['protocol_version']}；参考答案：{metadata['reference_revision']}。", "",
-             "主要查看要点覆盖率和忠实度；事实F1辅助诊断，各项不合成为总分。",
+             "检索查看召回率和片段排序；生成查看要点覆盖率和忠实度，事实F1辅助诊断。",
+             "检索指标只评实际送入回答模型的最终片段；各项不合成为总分。",
+             "召回率低且要点未覆盖时，优先核查最终资料；召回率高但回答未覆盖时，优先核查生成。",
+             "这只是排查方向，不能单凭分数确定是路由、检索、提示词还是温度导致。",
              "参考答案修订前后的分数不能直接当作系统优化收益。", ""]
     for row in rows:
         lines.extend([f"## {row['case_id']} · {row['status']}", "",
@@ -185,7 +195,26 @@ def write_report(directory, rows, metadata):
                           f"分数：{item['score']}；状态：{item['status']}。", ""])
             if item.get("error"):
                 lines.extend([str(item["error"]), ""])
-            if name == "answer_point_coverage" and item["status"] == "success":
+            if item.get("note"):
+                lines.extend([item["note"], ""])
+            if name == "context_recall":
+                for decision in item.get("decisions", []):
+                    for fact in decision.get("result", {}).get("classifications", []):
+                        label = "已找到依据" if fact["attributed"] else "未找到依据"
+                        lines.extend([f"- **{label}**：{fact['statement']}",
+                                      "  判定理由：" + fact.get("reason", "")])
+                lines.append("")
+            elif name == "context_precision":
+                verdicts = [decision["result"] for decision in item.get("decisions", [])
+                            if decision.get("type") == "ContextPrecisionOutput"]
+                for index, verdict in enumerate(verdicts):
+                    chunk_ids = row.get("chunk_ids", [])
+                    chunk_id = chunk_ids[index] if index < len(chunk_ids) else None
+                    label = "相关" if verdict["verdict"] else "不相关"
+                    lines.extend([f"- **片段 {index + 1}（chunkId={chunk_id}）：{label}**",
+                                  "  判定理由：" + verdict.get("reason", "")])
+                lines.append("")
+            elif name == "answer_point_coverage" and item["status"] == "success":
                 lines.extend([f"覆盖 {item['covered_points']} / {item['total_points']} 个必要要点。", ""])
                 for verdict in item["judgments"]:
                     label = "已覆盖" if verdict["verdict"] else "未覆盖"
@@ -221,8 +250,11 @@ async def run_scoring(args, rows, source, api_key):
         "reference_revision": rows[0]["reference_revision"],
         "reference_profile_sha256": rows[0]["reference_profile_sha256"],
         "selected_case_ids": [row["case_id"] for row in rows],
-        "metric_roles": {"primary": ["faithfulness", "answer_point_coverage"],
+        "metric_roles": {"primary": [name for name in METRICS if name != "factual_correctness"],
                          "auxiliary": ["factual_correctness"]},
+        "retrieval_context_mode": "actual_final_retrieved_chunks_in_original_order",
+        "retrieval_scope": "end_to_end_after_routing_reranking_and_selection",
+        "retrieval_reference_mode": "same_revised_generation_reference",
         "answer_point_coverage": "sum(covered_verdicts) / number_of_required_points",
         "temperature": 0, "max_tokens": 4096, "metrics": list(METRICS),
         "factual_correctness": {"mode": "f1", "atomicity": "high", "coverage": "high"},
@@ -240,12 +272,15 @@ async def run_scoring(args, rows, source, api_key):
             delegate = llm_factory(
                 args.model, client=client, cache=cache, temperature=0, max_tokens=4096,
                 max_retries=1, extra_body={"enable_thinking": False},
-                system_prompt="你是严格的问答评测员。忠实度只判断给定上下文是否支持回答；"
+                system_prompt="你是严格的问答评测员。检索指标只判断实际片段对参考答案的支持及排序；"
+                              "忠实度只判断给定上下文是否支持回答；"
                               "事实正确性只比较回答与参考答案的事实，不用外部知识补齐。"
                               "同义表达应视为等价。遵守每项评测的JSON结构，判定理由用中文。",
             )
             judge = RecordingJudge(delegate)
-            metrics = {"faithfulness": Faithfulness(llm=judge),
+            metrics = {"context_recall": ContextRecall(llm=judge),
+                       "context_precision": ContextPrecision(llm=judge),
+                       "faithfulness": Faithfulness(llm=judge),
                        "factual_correctness": FactualCorrectness(
                            llm=judge, mode="f1", atomicity="high", coverage="high")}
             with (directory / "scores.jsonl").open("x", encoding="utf-8") as output:
@@ -276,7 +311,8 @@ async def run_scoring(args, rows, source, api_key):
         write_json(directory / "scoring_run.json", metadata)
         cache.cache.close()
         lines = [f"生成评分摘要：{PROTOCOL_VERSION} / {metadata['reference_revision']}",
-                 "主要指标：要点覆盖率、忠实度；事实F1为辅助；不合成为总分。"]
+                 "检索指标：context_recall、context_precision；生成指标：要点覆盖率、忠实度；事实F1辅助。",
+                 "检索范围：本次问答最终资料，包含路由、重排序、筛选影响；各项不合成为总分。"]
         for name, item in summary["metrics"].items():
             lines.append(f"{name}: 均分={item['mean_score']}, 有效题={item['scored_cases']}, "
                          f"评分失败={item['failed_cases']}, 不适用={item['skipped_cases']}")
@@ -312,6 +348,7 @@ def main():
     count = sum(row["status"] == "success" and row.get("generation_scorable") is True for row in rows)
     print(f"采集文件：{source}\n将处理 {len(rows)} 条记录，其中 {count} 道知识问答可评分。")
     print(f"参考答案版本：{rows[0]['reference_revision']}；评分口径：{PROTOCOL_VERSION}")
+    print("同一批实际资料与回答将评分5项；ContextPrecision逐片段评分，模型调用次数会增加。")
     source_run = source.parent / "run.json"
     if source_run.exists():
         status = json.loads(source_run.read_text(encoding="utf-8"))["status"]

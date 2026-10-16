@@ -1,5 +1,6 @@
 -- 在 huianswer 数据库中执行；不包含数据库密码和 API key。
--- 向量与片段原文同表。4096 维先做精确检索，不创建 HNSW/IVFFlat 索引。
+-- 向量与片段原文同表。1024 维先保持精确检索，模型对比确定后再评估 HNSW/IVFFlat。
+-- 已有4096维数据须用 tools/reembed_chunks.py 迁移，不能强转或截断旧向量。
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -44,7 +45,7 @@ CREATE TABLE IF NOT EXISTS t_knowledge_chunk (
     doc_id BIGINT NOT NULL,
     chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
     content TEXT NOT NULL CHECK (btrim(content) <> ''),
-    embedding vector(4096) NOT NULL,
+    embedding vector(1024) NOT NULL,
     search_text TEXT,
     search_vector TSVECTOR GENERATED ALWAYS AS (
         to_tsvector('simple', coalesce(search_text, ''))
@@ -59,7 +60,7 @@ CREATE TABLE IF NOT EXISTS t_knowledge_chunk (
 );
 COMMENT ON TABLE t_knowledge_chunk IS '文档片段：原文、归属和嵌入向量';
 COMMENT ON COLUMN t_knowledge_chunk.chunk_index IS '在文档中的序号，从 0 开始';
-COMMENT ON COLUMN t_knowledge_chunk.embedding IS '4096 维嵌入；问题和文档必须使用同一嵌入模型配置';
+COMMENT ON COLUMN t_knowledge_chunk.embedding IS 'Qwen3-Embedding-0.6B 1024维嵌入；问题和文档必须使用同一嵌入模型配置';
 COMMENT ON COLUMN t_knowledge_chunk.search_text IS 'HanLP 分词后的文本，空格分隔，保留词序和重复词';
 COMMENT ON COLUMN t_knowledge_chunk.search_vector IS '基于 search_text 自动生成的全文检索向量，Java 不直接写入';
 COMMENT ON COLUMN t_knowledge_chunk.deleted IS '通用逻辑删除标识；删除文档时按 doc_id 物理清理片段';

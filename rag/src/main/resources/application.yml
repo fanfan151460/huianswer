@@ -47,8 +47,8 @@ rag:
   parse:
     max-characters: 1000000
   vector:
-    # 与 sql/01_knowledge.sql 的 vector(4096) 对齐；改模型维度时需要同时迁移表。
-    dimension: 4096
+    # 与 sql/01_knowledge.sql 的 vector(1024) 对齐；已有数据用 tools/reembed_chunks.py 重新向量化。
+    dimension: 1024
     metric-type: COSINE
   # 每个子问题：向量、关键词两路各召回最多 20 块，RRF 融合后保留最多 10 块候选。
   search:
@@ -93,7 +93,7 @@ rag:
       api-key: ${HUIANSWER_AI_API_KEY:}
       chat-model: ${HUIANSWER_CHAT_MODEL:deepseek-ai/DeepSeek-V4-Flash}
       rerank-model: ${HUIANSWER_RERANK_MODEL:BAAI/bge-reranker-v2-m3}
-      embedding-model: ${HUIANSWER_EMBEDDING_MODEL:Qwen/Qwen3-Embedding-8B}
+      embedding-model: ${HUIANSWER_EMBEDDING_MODEL:Qwen/Qwen3-Embedding-0.6B}
       # 每次 HTTP 请求的文本块数量，与数据库写入批次独立。
       embedding-batch-size: 32
       embedding-timeout-seconds: 60

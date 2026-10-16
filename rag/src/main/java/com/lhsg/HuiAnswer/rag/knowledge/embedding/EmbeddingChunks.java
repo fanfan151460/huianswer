@@ -28,8 +28,8 @@ public class EmbeddingChunks {
     private final int embeddingBatchSize = 32;
     private final int embeddingTimeoutSeconds = 60;
 
-    @Value("${rag.vector.dimension:4096}")
-    private int vectorDimension = 4096;
+    @Value("${rag.vector.dimension:1024}")
+    private int vectorDimension = 1024;
 
     private final Gson gson;
     // 复用连接；总耗时由每次 Call 的 timeout 控制，不自动重试或跟随重定向。

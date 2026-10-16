@@ -1,0 +1,54 @@
+Embedding方案切换：8B/4096 -> 0.6B/1024
+========================================
+
+一、范围
+模型：Qwen/Qwen3-Embedding-8B -> Qwen/Qwen3-Embedding-0.6B。
+文档与问题向量维度均为1024；数据库embedding列为vector(1024)。
+这是两套Embedding方案比较，同时改变了模型规模和维度，不能只归因于维度。
+保留原有chunk ID、原文、关键词、知识库/文档归属及分块方式。
+这轮沿用精确检索；暂不加ANN索引，避免把模型变化与索引变化混在一起。
+
+二、已有数据库迁移
+Python3.10及已有docker命令即可，不需要新业务接口、上传文档或安装Python依赖。
+HUIANSWER_AI_API_KEY从进程或Windows用户环境变量读取；不会写入准备文件。
+
+1. 准备新向量（数据库仍为4096维，可在应用运行时准备，但不要上传或修改资料）：
+python D:\code01\HuiAnswer\tools\reembed_chunks.py
+
+脚本按32块一批读取原有content并调用与应用相同的Embedding服务，
+每条向量与原chunk ID绑定，校验返回index、1024维及有效数值。
+准备目录位于D:\develop\huiAnswer\data\embedding-migrations\<时间>。
+source.json保存片段原文与源数据指纹；vectors-1024.json保存新向量。
+chunk-before.dump是原片段表的pg_dump备份，manifest.json记录模型、批次及校验值。
+API失败时不会切换数据库；保留已生成文件，便于检查。
+工具只向原https://api.siliconflow.cn地址发送数据，且逐块核对本次商城/园区合成测试资料，
+发现额外文档时停止，不自动发送未知内容。
+
+2. 停止Java应用，执行：
+python D:\code01\HuiAnswer\tools\reembed_chunks.py --apply "<上一步完整准备目录>"
+
+apply.sql会先加表锁，检查片段数量、指纹及正在处理的文档。
+通过后在数据库创建t_chunk_embedding_backup_<时间>保存整张旧片段表。
+同一个事务内解除维度约束、更新全部向量、恢复vector(1024)约束后提交。
+任何SQL失败会回滚。旧表、新向量文件、原pg_dump都会保留。
+
+3. 用新代码启动Java应用。
+application.yml、EmbeddingChunks默认维度和初始建表SQL已经对齐1024。
+如果之前设置过HUIANSWER_EMBEDDING_MODEL，请同步改成Qwen/Qwen3-Embedding-0.6B；
+不能只改文档向量，却让问题继续使用8B模型。相同维度也不能混用模型。
+
+三、回退
+停止Java应用，在原数据库执行准备目录的rollback.sql，
+并把application.yml及模型配置恢复为8B/4096后再启动。
+rollback.sql检查除embedding之外的片段字段与旧快照完全一致，
+有新上传、删除或修改时会拒绝直接回退，防止覆盖新数据。
+备份表和准备文件不会自动删除。
+
+四、后续比较
+沿用相同文档、分块、16道开发题、最终top6和相同评委配置。
+新结果保存到新的run目录，原4096维结果保留。
+当前max-distance=0.6只是初始对照值，不保证适用于新向量空间；
+结合漏召回题与实际距离再校准，并单独记录阈值变化。
+一次Embedding连通性请求不能代表稳定速度提升，需要批次统计与实际检索计时。
+同一批生成采集可用score_generation.py同时评两项检索和三项生成指标。
+早先独立检索题固定了正确知识库，和完整问答最终资料的评分范围不同，分开比较。

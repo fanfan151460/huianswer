@@ -1,4 +1,4 @@
-生成评测：采集完整问答，再用 Ragas 与必要要点覆盖率评分（generation-v2）
+完整问答评测：同一批实际资料同时评检索、生成与必要要点覆盖率（generation-v3）
 ====================================
 
 一、这轮测什么
@@ -10,6 +10,9 @@
 - 不连接数据库、不回查片段、不复用上一轮独立检索的返回值。
 - 采集器保留 evaluation 中全部片段，不另外截取前六个。
 - 这轮不比较三种检索策略，使用项目当前默认的完整问答链路。
+- 同时评最终资料的context_recall/context_precision及原有三项生成指标。
+- 检索指标使用与生成相同的修订参考答案，包含实际路由、重排序和筛选的影响。
+- 这与早先固定正确知识库、统一截取六片段的独立检索对照范围不同，不直接混比。
 
 二、准备
 1. application.yml 中 rag.evaluation.enabled: true，然后重启 Java 服务。
@@ -56,7 +59,7 @@ API key 使用 HUIANSWER_EVAL_API_KEY 或 HUIANSWER_AI_API_KEY；
 <本次采集目录>/scores/<评分时间>/
 - scores.jsonl：每题分数，以及评委拆分、支持关系等判定记录。
 - summary.json / summary.txt：分项均分、有效题数、失败题数、不适用题数及主要/辅助角色。
-- report.md：易读报告，逐题列出实际回答、修订参考答案、要点覆盖理由及缺少依据的陈述。
+- report.md：易读报告，逐题列出实际回答、修订参考答案、资料缺失事实、片段相关性、要点覆盖理由及缺少依据的陈述。
 - scoring_run.json：评委模型、Ragas版本、评分口径、参考答案版本及SHA-256。
 - judge-cache/：评委响应缓存。
 原始采集文件不会被修改，所有 runs 产物都已被现有 .gitignore 忽略。
@@ -76,28 +79,38 @@ warmup_history 记录真实产生的历史，因此不宣称复现了逐字固�
 需要重跑时再次运行脚本，会创建新目录，不覆盖旧结果。
 评分模型的请求数不等于题数，一个指标可能多次调用评委模型。
 
-六、评分口径 generation-v2
-1. faithfulness（主要指标，Ragas内置）：
+六、评分口径 generation-v3
+1. context_recall（检索，Ragas内置）：
+   将修订参考答案拆成事实，检查本次最终检索资料能够支持多少。
+   report.md逐条展示已找到/未找到依据的事实和理由。
+2. context_precision（检索，Ragas内置）：
+   检查相关片段是否排在前面，不是简单的相关片段数除以总片段数。
+   保留SSE中最终资料的原有顺序，报告逐片段展示chunkId、相关性及理由。
+   两项检索指标只使用retrieved_contexts，不混入回答、历史或预设参考资料。
+   有答案的知识题最终片段为空时，两项记0；评委调用失败保留空分数和错误。
+3. faithfulness（生成主要指标，Ragas内置）：
    检查实际回答的事实能否由本次实际上下文支持。
-   单轮题使用 evaluation 返回的片段；
-   多轮题还提供真实 warmup_history，单独记录为 faithfulness_contexts。
-   预设参考答案和历史中的 assistant 样例不会加入证据。
-2. answer_point_coverage（主要指标，自定义补充统计）：
-   评委逐条核对必要回答要点，覆盖记1，否则记0；
-   分数为 covered_points / total_points。
+   单轮题使用evaluation返回的片段；多轮题还提供真实warmup_history。
+   该组合单独记录为faithfulness_contexts；它不会传给上面两项检索指标。
+   预设参考答案和题集助手历史样例都不会加入证据。
+4. answer_point_coverage（生成主要指标，自定义补充统计）：
+   评委逐条核对必要回答要点，覆盖记1，否则记0；分数为covered_points / total_points。
    数值、单位、条件和否定方向需正确，同义表达及正常主体省略可以认可。
    正确扩写不扣覆盖率；扩写是否有资料依据仍由忠实度检查。
    保存每个要点的编号、原文、判断和中文理由，缺失/重复编号视为评分失败。
-   该指标不是Ragas的context_recall，不使用Ragas recall模式冒充要点覆盖率。
-3. factual_correctness（辅助指标，Ragas内置）：
+   该指标不是Ragas的context_recall，不用Ragas recall模式冒充要点覆盖率。
+5. factual_correctness（生成辅助指标，Ragas内置）：
    使用修订参考答案计算F1，atomicity、coverage仍为high。
    仍可能因参考答案没有涵盖有效补充而扣分，因此只作辅助诊断。
    不额外调用embedding模型，不计算answer_relevancy/answer_correctness。
-4. 无证据或评委没有提取到事实时，忠实度可为skipped，不强行当成0；
+6. 无证据或评委没有提取到事实时，忠实度可为skipped，不强行当成0；
    其他指标独立处理，评分失败保留错误和空分数。
-5. 4道特殊题仍标为manual_review，不纳入知识问答均分；
+7. 4道特殊题仍标为manual_review，不纳入知识问答均分；
    对照expected_answer_points和forbidden_claims人工检查。后者仍不自动扣分。
-6. 各项分开呈现，不合成为总分。参考口径修订后的分数不能当成问答系统优化收益。
+8. 各项分开呈现，不合成为总分。参考口径修订后的分数不能当成系统优化收益。
+   召回率低且要点未覆盖：优先核查最终资料，可能涉及路由、召回或筛选。
+   召回率高但要点未覆盖：优先核查生成阶段及评委判定。
+   这些只是排查方向，不能仅凭分数断定是提示词或温度造成。
 
 七、边界
 - 这些是开发集结果，独立测试集暂不使用。
@@ -121,3 +134,11 @@ warmup_history 记录真实产生的历史，因此不宣称复现了逐字固�
 确认两题的新报告判定合理后，去掉--case-ids处理全部已采集记录。
 --case-ids先筛选，再由--limit限制数量。每次评分另建目录，旧结果保留。
 默认取最新生成采集；需要固定某一次时，增加--results "<原采集文件完整路径>"。
+
+九、下次同时跑检索和生成
+- 命令不变：score_generation.py现在默认计算五项指标，旧的三项计算方式保持原样。
+- 仍可使用--case-ids或--limit先试几题，--dry-run不调用真实模型。
+- 不需要为了新增指标再请求Java接口或重新查库，已有results.jsonl即可评分。
+- 新增ContextPrecision会逐片段调用评委，整体评分耗时和模型调用量会增加。
+- scoring_run.json记录generation-v3及检索范围；参考答案仍为generation-dev-v2。
+- 本次只接入下次评分，不自动重跑已经完成的整批问答和评委调用。

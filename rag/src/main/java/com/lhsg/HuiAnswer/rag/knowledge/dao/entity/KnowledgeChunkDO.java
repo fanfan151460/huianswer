@@ -24,7 +24,7 @@ public class KnowledgeChunkDO {
     /** 交给聊天模型的原文 */
     private String content;
 
-    /** 用于相似度计算的向量，数据库列为 vector(4096) */
+    /** 用于相似度计算的向量，数据库列为 vector(1024) */
     @TableField(typeHandler = PgVectorTypeHandler.class)
     private float[] embedding;
 

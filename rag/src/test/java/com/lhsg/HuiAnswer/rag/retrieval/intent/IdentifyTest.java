@@ -78,7 +78,7 @@ class IdentifyTest {
                     .body(ResponseBody.create(response.toString(), MediaType.get("application/json"))).build();
         }).build();
         ApiUrl apiUrl = new ApiUrl();
-        apiUrl.setUrl("http://intent.test");
+        apiUrl.setChatUrl("http://intent.test");
         apiUrl.setChatPath("/v1/chat/completions");
         identify = new Identify(baseMapper, client, gson, apiUrl);
         ReflectionTestUtils.setField(identify, "apiKey", "fake-key-for-local-test");
@@ -108,6 +108,8 @@ class IdentifyTest {
         for (JsonObject body : capturedBodies) {
             assertEquals("json_object", body.getAsJsonObject("response_format").get("type").getAsString());
             assertFalse(body.get("stream").getAsBoolean());
+            assertEquals("disabled", body.getAsJsonObject("thinking").get("type").getAsString());
+            assertFalse(body.has("enable_thinking"));
             JsonObject input = input(body);
             assertTrue(input.has("question"));
             assertFalse(input.has("subQuestions"));

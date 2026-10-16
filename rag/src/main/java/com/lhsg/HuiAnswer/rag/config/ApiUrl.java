@@ -1,47 +1,43 @@
 package com.lhsg.HuiAnswer.rag.config;
 
 import lombok.Data;
-import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-/**
- * 模型服务地址：host 由 rag.ai.siliconflow.url 提供，端点路径由同节点的 *-path 提供。
- * 三个端点都走 OpenAI 兼容协议，换供应商时通常只需要改 yml 里的 url。
- */
+/** 对话走 DeepSeek 官网；向量化和重排序走硅基流动，分别配置地址。 */
 @Data
 @Component
-@ConfigurationProperties(prefix = "rag.ai.siliconflow")
 public class ApiUrl {
-    /** 服务地址，只有 host，不含路径 */
-    private String url;
+    @Value("${rag.ai.deepseek.url}")
+    private String chatUrl;
 
-    /** 对话补全端点路径 */
+    @Value("${rag.ai.deepseek.chat-path}")
     private String chatPath;
 
-    /** 向量端点路径 */
+    @Value("${rag.ai.siliconflow.url}")
+    private String url;
+
+    @Value("${rag.ai.siliconflow.embeddings-path}")
     private String embeddingsPath;
 
-    /** 重排序端点路径 */
+    @Value("${rag.ai.siliconflow.rerank-path}")
     private String rerankPath;
 
-    /** 对话补全完整地址：回答、问题改写、摘要压缩共用。 */
+    /** 回答、问题改写、意图路由和摘要压缩共用。 */
     public String chatCompletionsUrl() {
-        return endpoint(chatPath);
+        return endpoint(chatUrl, chatPath);
     }
 
-    /** 向量完整地址 */
     public String embeddingsUrl() {
-        return endpoint(embeddingsPath);
+        return endpoint(url, embeddingsPath);
     }
 
-    /** 重排序完整地址 */
     public String rerankUrl() {
-        return endpoint(rerankPath);
+        return endpoint(url, rerankPath);
     }
 
-    /** 去掉 host 的尾斜杠再拼路径，避免配置多打一个 / 后拼出双斜杠。 */
-    private String endpoint(String path) {
-        String host = url == null ? "" : url.replaceAll("/+$", "");
-        return host + (path == null ? "" : path);
+    private String endpoint(String host, String path) {
+        String base = host == null ? "" : host.replaceAll("/+$", "");
+        return base + (path == null ? "" : path);
     }
 }

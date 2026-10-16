@@ -15,6 +15,7 @@ public class ConfigValidator {
     void check() {
         requireEnv("HUIANSWER_DB_PASSWORD");
         requireEnv("HUIANSWER_AI_API_KEY");
+        requireEnv("DEEPSEEK_API_KEY");
     }
 
     /**

@@ -41,5 +41,14 @@ public class prompt {
             JSON 必须包含两个字段：
             - rewrittenQuestion：非空字符串，补全上下文后的完整输入。
             - subQuestions：非空字符串数组，按原输入顺序排列且可独立理解的子问题。
+            输出必须是针对最后一条 user 消息的处理结果，不能是格式说明、字段名罗列或占位内容。
+
+            下面两个例子只用于说明格式，不是待处理的输入，不要照抄其中的业务内容。
+
+            例一：当前输入已能独立理解，不拆分。subQuestions 只有一项，且与 rewrittenQuestion 完全一致。
+            {"rewrittenQuestion":"门诊费用能不能报销","subQuestions":["门诊费用能不能报销"]}
+
+            例二：当前输入包含两个可分别处理的独立需求，拆成两项。共用的主体和条件分别补全。
+            {"rewrittenQuestion":"住院费用怎么报销，报销比例是多少","subQuestions":["住院费用怎么报销","住院费用报销比例是多少"]}
             """;
 }

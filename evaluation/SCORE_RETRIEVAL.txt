@@ -1,0 +1,62 @@
+Ragas 检索评分
+===============
+
+一、环境
+已经在 D:\develop\huiAnswer\eval-venv 中安装并验证。
+解释器：D:\develop\huiAnswer\eval-venv\Scripts\python.exe
+采集脚本只用标准库；本评分脚本必须使用以上安装了Ragas的独立解释器。
+固定的直接依赖见 evaluation/requirements-eval.txt。
+安装时遇到的是Windows代理协议和依赖兼容问题，已通过进程内代理兼容及固定版本解决。
+依赖、缓存、临时文件放在 D:\develop\huiAnswer 下，现有系统Python没有添加评分依赖。
+
+二、先看评分的是什么
+每条记录包含user_input、reference、retrieved_contexts。
+ContextRecall：参考答案的各项事实有多少能从返回片段中找到支持，越高越好。
+ContextPrecision：Ragas采用平均精确率形式，关注有用片段是否排在前面，越高越好。
+它不是简单的“相关片段数除以6”；例如相关片段全在前面，后面有无关片段仍可能得1分。
+两项指标不依赖你的向量距离、RRF数值或重排模型分数。
+暂时未采集最终回答，因此这里不评回答正确率或Faithfulness。
+评委模型有波动和误判，需要结合scores.jsonl内的逐项理由抽查。
+
+三、离线校验（PowerShell和cmd均可执行）
+D:\develop\huiAnswer\eval-venv\Scripts\python.exe D:\code01\HuiAnswer\evaluation\score_retrieval.py --dry-run
+默认选择最新一次采集的results.jsonl。
+需要固定某次结果时，用 --results 指定完整路径。
+
+四、先评一题的三个策略
+D:\develop\huiAnswer\eval-venv\Scripts\python.exe D:\code01\HuiAnswer\evaluation\score_retrieval.py --limit 1
+API key 优先读取 HUIANSWER_EVAL_API_KEY，其次 HUIANSWER_AI_API_KEY，否则在终端隐藏输入。
+这里需要模型服务的API key，不是Java登录token，不需要启动Java服务。
+默认模型按当前项目配置为 deepseek-ai/DeepSeek-V4-Flash，服务为SiliconFlow。
+可以通过 --model、--base-url，或 HUIANSWER_EVAL_MODEL、HUIANSWER_EVAL_BASE_URL 指定评委。
+也会读取 HUIANSWER_CHAT_MODEL、HUIANSWER_AI_URL，地址末尾自动补 /v1。
+例如想沿用其它已开通的模型，请显式传 --model 后跟模型完整名称。
+模型参数固定temperature=0、max_tokens=4096、enable_thinking=false，便于保持比较条件一致。
+
+五、抽查一题的评分与理由后，再跑整批
+D:\develop\huiAnswer\eval-venv\Scripts\python.exe D:\code01\HuiAnswer\evaluation\score_retrieval.py
+这是对已采集的48条记录评分，不会重新执行Java检索。
+ContextPrecision逐个片段请求评委，ContextRecall对整组片段请求评委，所以不是只有48次模型请求。
+同一批次使用Ragas缓存复用相同输入的评委判定，减少重复调用，也保持公共片段判定一致。
+模型HTTP请求最多有一次SDK重试，结构化输出仅尝试一次；评分仍失败会留空并记录原因，不当成0分。
+评分会产生模型服务调用费用，建议先完成 --limit 1 的检查。
+
+六、输出
+在对应采集目录下新增 scores/本次评分时间/，不会覆盖results.jsonl。
+scores.jsonl：每条记录两个指标的分数、中间判定理由、错误和评分耗时。
+summary.json、summary.txt：三种策略的汇总。
+scoring_run.json：来源文件hash、评委模型、参数、依赖版本及完成状态。
+judge-cache/：Ragas缓存的评委输入输出。
+汇总只比较三种策略都成功评分的共同题目，避免某组漏题导致均值偏差。
+summary里的检索耗时取自最初的采集文件，不包含评委打分耗时。
+中断后已有行保留；每次新建评分目录，不覆盖旧评分。
+
+七、怎么看结论
+先看Recall是否漏了必要事实，再看Precision是否把有用片段排到前面。
+召回与排序效果相近时，再比较原始检索耗时和服务依赖成本。
+16题属于开发集，只能建立第一版基线，不能据此宣布总体准确率或生产环境性能。
+下一轮先看具体漏题，再调整参数；保留集用于方案确定后的验证。
+
+官方说明：
+https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/context_recall/
+https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/context_precision/

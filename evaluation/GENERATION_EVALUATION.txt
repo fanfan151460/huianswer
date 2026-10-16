@@ -1,0 +1,96 @@
+生成评测：采集完整问答，再用 Ragas 评分
+====================================
+
+一、这轮测什么
+- 沿用现有20道开发题；16道有答案的知识问答计算指标。
+- 另外4道澄清、无答案、闲聊题标为 manual_review，对照预期行为人工检查。
+- 使用现有完整问答接口 POST /hui-ansWer/chat/stream。
+- 不指定正确知识库，不向问答模型发送参考答案。
+- 实际资料来自本次 SSE evaluation 事件，回答由 delta 拼接。
+- 不连接数据库、不回查片段、不复用上一轮独立检索的返回值。
+- 采集器保留 evaluation 中全部片段，不另外截取前六个。
+- 这轮不比较三种检索策略，使用项目当前默认的完整问答链路。
+
+二、准备
+1. application.yml 中 rag.evaluation.enabled: true，然后重启 Java 服务。
+   evaluation 事件必须包含本次送给回答模型的片段正文；空资料时也发送 []。
+2. 和之前一样登录，取得 token。
+   默认用户名 admin；不同用户名用 --username 指定。
+3. 登录 token 可放在 HUIANSWER_EVAL_TOKEN；不设置则运行时隐藏输入。
+   脚本不会保存 token，不会自动登录，也不会重试失败的问答。
+
+三、先采集一道题
+普通 Python 3.10+ 即可，不用安装新依赖：
+
+python D:\code01\HuiAnswer\evaluation\collect_generation.py --limit 1
+
+结果在：
+evaluation/xinglan-shop-v1/runs/generation/<本次时间>/results.jsonl
+同目录 run.json 保存运行状态和题号，不含登录凭据。
+
+检查这一行：
+- status 应为 success。
+- evaluation_received、done_received 应为 true。
+- response 是拼接后的完整回答。
+- chunks、retrieved_contexts 是这次回答真正使用的片段。
+- reference 是题集预设答案，只供后续评分。
+
+只检查题集、不请求服务：
+python D:\code01\HuiAnswer\evaluation\collect_generation.py --dry-run
+
+四、给这一题评分
+使用之前安装好的评测虚拟环境；PowerShell 命令：
+
+& "D:\develop\huiAnswer\eval-venv\Scripts\python.exe" D:\code01\HuiAnswer\evaluation\score_generation.py --limit 1
+
+默认只寻找 generation 目录中最新的采集文件，不会选到独立检索结果。
+指定文件时使用 --results "<完整的results.jsonl路径>"。
+模型配置沿用已有 HUIANSWER_EVAL_MODEL/HUIANSWER_CHAT_MODEL、
+HUIANSWER_EVAL_BASE_URL/HUIANSWER_AI_URL。
+API key 使用 HUIANSWER_EVAL_API_KEY 或 HUIANSWER_AI_API_KEY；
+没有设置则隐藏输入。这里要填模型 API key，不是登录 token。
+
+评分输出在：
+<本次采集目录>/scores/<评分时间>/
+- scores.jsonl：每题分数，以及评委拆分、支持关系等判定记录。
+- summary.json / summary.txt：均分、有效题数、失败题数、不适用题数。
+- scoring_run.json：评委模型、Ragas版本和指标配置。
+- judge-cache/：评委响应缓存。
+原始采集文件不会被修改，所有 runs 产物都已被现有 .gitignore 忽略。
+
+五、跑完整开发集
+确认单题数据和评分正常后：
+
+python D:\code01\HuiAnswer\evaluation\collect_generation.py
+& "D:\develop\huiAnswer\eval-venv\Scripts\python.exe" D:\code01\HuiAnswer\evaluation\score_generation.py
+
+全量是20道开发题，另有2次多轮题前置问答，总计22次业务问答调用。
+多轮题只回放题集中历史的 user 输入，assistant 由真实接口回答；
+不会将题集里的 assistant 样例强行写进业务库。
+warmup_history 记录真实产生的历史，因此不宣称复现了逐字固定的历史样例。
+每道题从新会话开始，不同题不会共享会话。
+任何一次采集失败就停止，保留已完成结果；错误记录不会按0分处理。
+需要重跑时再次运行脚本，会创建新目录，不覆盖旧结果。
+评分模型的请求数不等于题数，一个指标可能多次调用评委模型。
+
+六、两个指标
+1. faithfulness：
+   检查实际回答的事实能否由本次实际上下文支持。
+   单轮题使用 evaluation 返回的片段；
+   多轮题还提供 warmup_history 中真实产生的历史，并单独记录
+   faithfulness_contexts。预设参考答案和历史中的 assistant 样例不会加入证据。
+2. factual_correctness：
+   将回答与预设参考答案比较，使用 F1。
+   atomicity、coverage 使用 high，检查更细的事实匹配。
+   不额外调用 embedding 模型，不计算 answer_relevancy/answer_correctness。
+3. 无证据或评委没有提取到事实时，忠实度可为 skipped，
+   不把它强行当成0分；事实正确性仍独立评分。
+   每项均分都同时列出有效题数、评分失败题数和不适用题数。
+4. 4道特殊题不会硬套事实题均分；在 scores.jsonl 中查看 manual_review，
+   对照 expected_answer_points 和 forbidden_claims 判断回复是否合适。
+
+七、边界
+- 这些是开发集结果，独立测试集暂不使用。
+- 评分脚本只读已采集结果，重复评分不会再请求 Java 问答接口。
+- 本次不修改意图策略和响应延迟；http_elapsed_ms 只是采集请求的总时长。
+- 评测结束可关闭 rag.evaluation.enabled 并重启，日常问答不再发送评测正文。

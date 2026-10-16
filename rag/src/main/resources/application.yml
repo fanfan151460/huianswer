@@ -38,6 +38,8 @@ rocketmq:
     group: ${HUIANSWER_MQ_CONSUMER_GROUP:huiAnswer-rag-chunks-service}
 
 rag:
+  evaluation:
+    enabled: true
   ingestion:
     mq-enabled: true
   storage:

@@ -1,0 +1,79 @@
+检索结果批量采集
+================
+
+脚本：evaluation/collect_retrieval.py
+依赖：Python 3.10 或以上，仅使用标准库，无需 pip install。
+在项目根目录 D:\code01\HuiAnswer 执行下面命令。终端可以是 PowerShell、cmd。
+Java 服务需要先启动；本脚本不会启动、停止服务或上传文档。
+
+一、接口约定
+POST /api/evaluation/retrieval
+请求字段为 question、dbIds、choose。
+现有 choose 支持 vector、searchKeyWord、mixSearch、rerank。
+脚本默认比较 vector、mixSearch、rerank，额外分析关键词时可显式加入 searchKeyWord。
+rerank 分支先混合召回，再调用 RerankChunks.rerank；score 为重排分数。
+接口顶层 time 是纳秒，覆盖所选策略的整个处理过程。
+未知 choose 建议抛参数异常；若返回空结果，采集端无法分辨策略未实现与确实没有片段。
+请求属性建议使用小写 choose；Lombok 的 getChoose/setChoose 对应 JSON 属性名 choose。
+
+二、完全离线检查
+python evaluation\collect_retrieval.py --dry-run
+默认16道可检索开发题，vector、mixSearch、rerank三种策略，共48次评测请求。
+dry-run 不连接服务、不索取 token，也不产生采集文件。
+
+三、先采第一题，验证接口和保存格式
+python evaluation\collect_retrieval.py --limit 1
+这会发送三次评测请求，每种策略一次。
+按提示粘贴管理员登录后返回的 token，输入不会显示。
+用户名默认 admin；需要时用 --username 指定。
+脚本先 GET /api/knowledge-base，通过 knowledge-bases.json 内的准确名称自动匹配真实 ID。
+找不到或有多个同名库时会停止，不会误用全库检索。
+若你修改过知识库名称，请同步目录里的名称，或在服务里恢复为本次创建时的名称。
+
+默认地址 http://localhost:8080。
+改过端口时：
+python evaluation\collect_retrieval.py --base-url http://localhost:8081 --limit 1
+
+四、单题结果确认无误，再跑开发集
+python evaluation\collect_retrieval.py
+只跑某几种策略：
+python evaluation\collect_retrieval.py --strategies vector mixSearch
+也比较纯关键词一路：
+python evaluation\collect_retrieval.py --strategies vector searchKeyWord mixSearch rerank
+每个 HTTP 请求默认超时90秒，需要时用 --timeout 调整。
+默认不自动重试，失败也逐条记录并继续；避免悄悄重复调用模型影响次数和耗时。
+同一套比较期间保持 Java 的召回数、阈值、分块、向量模型、重排模型及资料不变。
+如果重排请求失败并降级为原候选顺序，需要查看后端日志并标注该轮，不能把它当作真正重排序的效果。
+
+五、结果写在哪里
+evaluation/xinglan-shop-v1/runs/每次运行时间/
+    run.json：本次题目、策略、真实库ID、完成数量、失败数量等
+    results.jsonl：每行是一道题的一种策略的结果
+目录已在 evaluation/.gitignore 忽略，不自动提交运行结果。
+每次使用新目录，不覆盖旧结果。中断时已完成的每行仍然保留。
+可用 --output-dir 指定其它结果父目录。
+
+results.jsonl 的主要字段：
+user_input：本次真正提交给检索接口的独立完整问题。
+original_question：题库原始问题，可能带有“它”“那”等指代。
+reference：人工定义的参考答案。
+required_evidence、reference_contexts：预期规则章节及原文，供后续评分使用。
+candidates：服务端返回的全部候选，保留原顺序和原分数。
+chunks：本次统一取的前6段，--top-k 可调整。
+retrieved_contexts：chunks 的纯正文，后续整理成 Ragas 需要的样本。
+returned_chunk_count：服务器实际返回了几段。
+server_elapsed_ms：接口 time 的纳秒除以1000000得到的毫秒。
+http_elapsed_ms：客户端整次请求处理的毫秒，包含网络、读取和响应解析。
+score_type：说明分数的意义；向量距离越小越好，关键词、RRF、重排分数越大越好，不能跨策略直接比数值。
+status=error：请求失败或响应格式异常。
+status=success 且 chunks=[]：调用成功，但确实没返回片段；不等于检索命中或正确。
+成功次数不是准确率，本脚本只采集，不自动打分，也不生成最终回答。
+
+多轮题使用题库的 retrieval_query，而不是直接检索“那要多久”等原始追问。
+这次固定预期知识库范围，只比较检索层；后续完整问答评测才加入改写、路由、历史、生成。
+澄清、闲聊、无答案题不放进这轮检索采集，holdout 保留集也不会被脚本读取。
+
+六、可选的环境变量
+脚本只需要已有登录 token，不读取模型 API key。
+可选 HUIANSWER_EVAL_USERNAME、HUIANSWER_EVAL_TOKEN；未设置 token 时使用终端隐藏输入。
+token 和请求头不会写入本脚本生成的结果文件。

@@ -88,6 +88,8 @@ public class ChatServiceImpl implements IChatService {
     private Long modelWait;
     @Value("${rag.chat.answer-max-tokens}")
     private int answerMaxTokens;
+    @Value("${rag.evaluation.enabled:false}")
+    private boolean enabledAssess;
 
     @Override
     public void chat(QuestionReq req, SseEmitter emitter) {
@@ -201,7 +203,6 @@ public class ChatServiceImpl implements IChatService {
         // 正文及模型统计只由工作线程维护，停止接口不跨线程入库。
         LLMChatResp resp = new LLMChatResp().setModel(chatModel).setNeedChunks(List.of());
         StringBuilder answer = new StringBuilder();
-
         try {
             emitter.send(SseEmitter.event().comment("connected"));
             task.checkStopped();
@@ -224,6 +225,9 @@ public class ChatServiceImpl implements IChatService {
             if (!references.isEmpty()) {
                 references = rerankChunks.rerank(rewriteResult.getRewrittenQuestion(), references);
                 task.checkStopped();
+            }
+            if (enabledAssess) {
+                emitter.send(SseEmitter.event().name("evaluation").data(references, APPLICATION_JSON));
             }
             // 原始输入、历史和统一资料交给模型；意图结果仅用于后端决定检索路径。
             Messages messages = new Messages().setHistory(history)

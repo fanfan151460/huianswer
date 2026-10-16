@@ -91,7 +91,7 @@ rag:
       embeddings-path: /v1/embeddings
       rerank-path: /v1/rerank
       api-key: ${HUIANSWER_AI_API_KEY:}
-      chat-model: ${HUIANSWER_CHAT_MODEL:deepseek-ai/DeepSeek-V4.1-Flash}
+      chat-model: ${HUIANSWER_CHAT_MODEL:deepseek-ai/DeepSeek-V4-Flash}
       rerank-model: ${HUIANSWER_RERANK_MODEL:BAAI/bge-reranker-v2-m3}
       embedding-model: ${HUIANSWER_EMBEDDING_MODEL:Qwen/Qwen3-Embedding-0.6B}
       # 每次 HTTP 请求的文本块数量，与数据库写入批次独立。

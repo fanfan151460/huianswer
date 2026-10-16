@@ -1,305 +1,302 @@
-# HuiAnswer
+# 慧答 HuiAnswer
 
-Java RAG 学习项目。当前阶段：知识库 CRUD、文档上传与分块，以及 Embedding 客户端和批量片段入库。
+基于 Java 的多知识库 RAG 问答项目，覆盖文档异步导入、混合检索、重排序、多轮对话、流式回答和停止生成。用户直接提问，由后端改写与拆分问题、选择知识库，再结合检索资料生成回答。
 
-## 当前实现
+当前提供后端接口和评测脚本，前端待接入。工程分为 `rag` 和 `framework` 两个 Maven 模块，运行时是一个 Spring Boot 应用。
 
-- framework：沿用已有统一返回、异常处理等基础设施。
-- rag：应用启动入口、知识实体、Mapper 和数据库类型转换；目前一起启动一个进程。
-- 三张表：t_knowledge_base、t_knowledge_document、t_knowledge_chunk。
-- 片段原文和嵌入向量同表，向量列为 vector(4096)。
-- 建表、知识库 CRUD、文档上传/解析/分块已实现；Embedding 客户端与批量片段入库已验证。上传接口尚未调用向量化入库，检索和问答接口待后续课程。
+## 已实现功能
 
-## Maven 依赖管理
+| 功能 | 当前实现 |
+| --- | --- |
+| 用户与权限 | 预置账号登录、BCrypt 密码校验、Redis token 登录；知识库管理限定 `admin` 账号，关闭公开注册 |
+| 知识库管理 | 创建、查询、修改名称与业务描述、删除；记录创建者 |
+| 文档管理 | TXT、Markdown、文本型 PDF 上传，异步处理状态查询、失败重试、启停、删除、文档与片段分页 |
+| 文档入库 | 本地保存原文件，RocketMQ 消费后用 Tika 解析、分块、向量化，批量保存片段 |
+| 问题理解 | 使用最近两轮成功对话完成指代消解、条件补全与问题拆分，结构化输出失败时降级为原问题 |
+| 检索与路由 | 每个子问题独立分类、选库和检索；向量与关键词两路召回，RRF 融合，合并去重后统一重排序 |
+| 多轮对话 | 按用户隔离会话，保存问题、回答、引用及结束状态；最近历史与滚动摘要共同参与问答 |
+| 流式与停止 | SSE 输出正文，支持用户停止；共享 Redis 标记、订阅通知与定时检查协调跨实例停止 |
+| 评测 | 三种检索策略对比、完整问答质量评估、低分题报告和首字响应时间统计 |
 
-父 pom.xml 的 dependencyManagement 统一管理依赖版本；Spring Boot BOM 管理 Spring、Jackson、PostgreSQL 等版本。
-OkHttp 使用父 POM 的 okhttp.version=4.12.0；Tika 核心、文本解析和 PDF 解析模块使用 tika.version=3.2.3。
-rag/pom.xml 的 dependencies 声明本模块需要的 OkHttp、tika-core、tika-parser-text-module、tika-parser-pdf-module，不再写它们的 version。
-dependencyManagement 不会自动引入依赖，也不会仅凭 org.apache.tika 这个 groupId 管理全部模块；每个实际使用的 artifactId 需要匹配的管理条目。
-父 POM 中已有 tika-parsers-standard-package 的管理条目，目前 rag 只引入所需文本/PDF 模块，不引入整套解析器。
+## 技术与代码结构
 
-参考：https://maven.apache.org/guides/introduction/introduction-to-dependency-mechanism.html
+JDK 17、Spring Boot 3.0.7、MyBatis-Plus 3.5.12、PostgreSQL + pgvector、Redis + Redisson、RocketMQ、Tika、HanLP、OkHttp、Gson。评测使用 Python 和 Ragas。
 
-## 知识库 CRUD
+```text
+HuiAnswer/
+├── framework/           # 统一返回、异常处理、防重复提交、消费幂等、方法计时
+├── rag/
+│   └── src/main/java/com/lhsg/HuiAnswer/rag/
+│       ├── admin/       # 账号登录、请求拦截、用户上下文
+│       ├── knowledge/   # 知识库、文档、片段、解析、分块、向量化及 MQ 导入
+│       ├── retrieval/   # 改写拆分、意图路由、混合检索、重排序
+│       ├── chat/        # 问答编排、SSE、生成任务和停止控制
+│       ├── memory/      # 会话、消息、历史窗口与异步摘要
+│       ├── assessment/  # 独立检索评测接口
+│       └── config/      # 数据库、线程池、模型地址、拦截器等配置
+├── sql/                 # 建表与按编号执行的增量脚本
+├── deploy/rocketmq/     # 本地 RocketMQ、Redis 的 Docker Compose
+├── evaluation/          # 合成语料、题集、采集、评分与报告脚本
+├── tools/               # 已有片段重新向量化工具
+└── docs/                # 文档管理接口、向量迁移说明
+```
 
-默认应用地址：http://localhost:8080。IDEA 中已经运行的旧应用需要重启后才会加载本次修改。
+### 文档导入
 
-| 方法 | 地址 | 功能 |
+```mermaid
+flowchart LR
+    U[管理员上传文档] --> F[保存原文件]
+    F --> P[短事务登记 pending]
+    P --> MQ[RocketMQ 文档任务]
+    MQ --> C[消费任务并登记 running]
+    C --> T[Tika 解析与文本分块]
+    T --> E[Embedding 与 HanLP 分词]
+    E --> DB[短事务保存片段并登记 success]
+```
+
+- 消息只携带 `kbId`、`docId`，消费者按记录读取原文件。上传响应代表任务已登记，需查询文档的 `status` 确认结果。
+- 解析、模型请求放在数据库事务外；片段写入与成功状态在同一短事务中提交。失败后另行登记 `failed`，避免失败状态随事务一起回滚。
+- 生产者发送失败后指数退避，首次发送加最多 5 次重试，复用同一个消息 key；耗尽后记录文档失败，支持手动重试。
+- 消费者使用 Redis 幂等注解，并配置 `maxReconsumeTimes=3`。生产者发送重试与消费者重试分别处理，发送失败不会自动进入消费死信队列。
+- 分块默认 500 个 Unicode 码点、重叠 100；向量请求每批最多 32 块，数据库写入每批 100 条。
+- 删除知识库或文档会逻辑删除相应业务记录，并物理清理片段；磁盘原文件暂时保留。
+
+### 问答链路
+
+```mermaid
+flowchart TD
+    Q[原始问题与会话 ID] --> H[读取成功历史与摘要]
+    H --> W[改写并拆分问题]
+    W --> P[线程池并行处理各子问题]
+    P --> I[独立意图识别与选库]
+    I --> K[KNOWLEDGE 指定库检索]
+    I --> N[NO_MATCH 全库检索]
+    I --> S[CHAT 或 CLARIFY 跳过检索]
+    K --> M[合并候选并按 chunkId 去重]
+    N --> M
+    S --> M
+    M --> R[统一重排序并取最终资料]
+    R --> L[原始问题 + 历史摘要 + 资料交给回答模型]
+    L --> SSE[SSE 输出正文并保存消息]
+    SSE --> A[回答结束后异步更新摘要]
+```
+
+1. 问答请求不接收知识库 ID。路由目录来自知识库名称和 `description`，由模型选择一个或多个有效知识库。
+2. 同一轮先提交全部子问题任务，每个任务完成自己的路由和检索，等待全部结果后统一重排序。向量与关键词两路目前在单个子任务内部顺序执行。
+3. `KNOWLEDGE` 查询选定知识库；`NO_MATCH` 或路由调用异常降级为全库检索；`CLARIFY` 和 `CHAT` 不检索，最终回复仍由回答模型生成。
+4. 子问题和改写文本服务于检索；最终回答模型接收用户原始问题、历史与摘要、最终资料，不把改写文本替换为用户原话。
+5. 文档启用且处理成功、知识库及关联记录未删除时，片段才能参与检索。范围参数内部约定为：`null` 查全库，空列表不检索，有 ID 的列表查指定库。
+
+### 检索、记忆与并发控制
+
+| 项目 | 当前参数与做法 |
+| --- | --- |
+| 向量 | `Qwen/Qwen3-Embedding-0.6B`，1024 维；问题与文档使用同一模型配置 |
+| 向量召回 | PostgreSQL `<=>` 余弦距离升序，每个子问题最多 20 块，再保留距离小于 0.6 的结果 |
+| 关键词召回 | HanLP 分词，`search_text` 保留词序与重复词；生成列 `search_vector` 配合 GIN 索引，用 `ts_rank_cd` 排序，最多 20 块 |
+| 融合 | 按两路名次做 RRF，`k=60`；每个子问题保留最多 10 个候选，不直接相加距离和关键词分数 |
+| 重排序 | 各子问题候选合并去重，`BAAI/bge-reranker-v2-m3` 统一重排，最终最多 6 块 |
+| 改写历史 | 最近两轮成功问答，最多四条消息，不传摘要 |
+| 回答历史 | 最多最近八轮成功问答原文，加已有摘要；失败或停止的回答不组成成功历史轮次 |
+| 摘要 | 八轮窗口之外的历史积累满三轮后滚动压缩，更新摘要正文及已覆盖轮次；异步执行，失败时保留旧摘要 |
+| 会话并发 | Redisson 会话锁覆盖本轮生成及收尾，同一会话正在生成时拒绝新的提问 |
+| 停止 | 本地任务对象 + Redis 任务/停止记录 + RTopic 通知，每 5 秒扫描兜底；工作线程统一入库、收尾和解锁 |
+
+参数见 [application.yml](rag/src/main/resources/application.yml)。当前向量查询为精确检索，尚未建立 HNSW/IVFFlat 近似索引。
+
+## 本地启动
+
+### 1. 准备运行环境
+
+- JDK 17、Maven 3.9，`java`、`mvn` 指向对应安装目录。
+- PostgreSQL 16，安装 pgvector 扩展；默认地址 `localhost:5432`，数据库 `huianswer`。
+- Redis 默认 `localhost:6379`；RocketMQ NameServer 默认 `127.0.0.1:9876`。
+- DeepSeek 官网密钥，以及硅基流动密钥。
+
+项目提供 RocketMQ 和 Redis 的本地配置，在仓库根目录执行：
+
+```powershell
+docker compose -f deploy/rocketmq/compose.yml up -d
+docker compose -f deploy/rocketmq/compose.yml ps
+```
+
+这份 Compose 不包含 PostgreSQL。若本机已有同端口服务，可复用对应服务。Broker 配置面向本机客户端，跨主机部署需调整 `brokerIP1` 和端口。默认数据目录在 `D:/develop/huiAnswer/data` 下，换机器时检查挂载路径。
+
+### 2. 设置环境变量
+
+必填变量如下，实际值不写入仓库：
+
+| 变量 | 用途 |
+| --- | --- |
+| `HUIANSWER_DB_PASSWORD` | PostgreSQL 密码 |
+| `DEEPSEEK_API_KEY` | 官网的回答、改写、意图识别、摘要调用 |
+| `HUIANSWER_AI_API_KEY` | 硅基流动的 Embedding、Rerank，以及默认评分脚本 |
+
+已有 Windows 用户环境变量时，在启动应用的 PowerShell 中读取：
+
+```powershell
+foreach ($name in @('HUIANSWER_DB_PASSWORD', 'DEEPSEEK_API_KEY', 'HUIANSWER_AI_API_KEY')) {
+    $value = [Environment]::GetEnvironmentVariable($name, 'User')
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        $secret = Read-Host $name -AsSecureString
+        $value = [System.Net.NetworkCredential]::new('', $secret).Password
+    }
+    [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+}
+```
+
+没有持久化的值会在当前终端隐藏输入，仅供本次启动使用。IDEA 继承其父进程环境，在旧终端或未退出的桌面启动器中重开 IDEA，可能仍继承旧值。
+
+其他连接地址、存储目录和模型变量见 [.env.example](.env.example)。Spring Boot 不会自动加载该文件或 `.env`。本机的 `start-local.ps1`、`start-idea.ps1` 未随仓库分发，新机器按这里的标准命令启动即可。
+
+### 3. 初始化数据库
+
+以下命令需要本机有 PostgreSQL 命令行客户端。首次创建数据库；已有 `huianswer` 时跳过第一条：
+
+```powershell
+$env:PGPASSWORD = $env:HUIANSWER_DB_PASSWORD
+createdb -h localhost -p 5432 -U postgres huianswer
+
+Get-ChildItem .\sql\*.sql | Sort-Object Name | ForEach-Object {
+    psql -h localhost -p 5432 -U postgres -d huianswer -X -v ON_ERROR_STOP=1 -f $_.FullName
+    if ($LASTEXITCODE -ne 0) { throw "执行 $($_.Name) 失败" }
+}
+```
+
+新库按 `01` 至 `10` 顺序执行，包含知识库、文档、片段、账号、创建者、会话、消息、摘要、启停和关键词字段。知识表包含部分数据库外键，会话与消息归属另由业务代码校验。
+
+`02_admin.sql` 预置本地演示管理员；知识库管理要求使用 `admin` 登录。已有库按需执行迁移：`CREATE TABLE IF NOT EXISTS` 不会升级旧向量列，4096 维旧数据需先阅读 [向量迁移说明](docs/embedding-migration.txt)，使用 [重新向量化工具](tools/reembed_chunks.py)，不能直接截断为 1024 维。
+
+### 4. 构建并运行
+
+```powershell
+mvn -B -ntp -pl rag -am -DskipTests package
+java -jar rag/target/rag-1.0-SNAPSHOT.jar
+```
+
+默认接口地址为 `http://localhost:8080`，可用 `HUIANSWER_PORT` 修改。这是 API 服务地址，当前还没有首页界面。
+
+原文件默认保存在 `D:/develop/huiAnswer/data/documents/{kbId}/`，上传临时目录为 `D:/develop/huiAnswer/data/tmp`。可分别用 `HUIANSWER_STORAGE_DIR`、`HUIANSWER_UPLOAD_TEMP_DIR` 覆盖。
+
+### 模型调用配置
+
+回答、改写、意图识别和摘要使用官网 `https://api.deepseek.com/chat/completions`，默认模型名 `deepseek-flash`。向量化和重排序继续使用硅基流动。模型地址与密钥分别绑定，评分模型也可单独配置。
+
+改写、意图识别与摘要显式关闭思考；回答保留按意图选择思考模式的行为。回答预算为 8192 token，包含思考与正文，是单次输出上限；空正文按失败处理，有正文但 `finish_reason=length` 时保留已生成内容。
+
+## 接口与联调
+
+普通接口沿用 `Result`：成功 `code` 为字符串 `"0"`，业务失败需读取 `code` 和 `message`，不能只看 HTTP 200。登录后通过请求头传递：
+
+```http
+username: admin
+token: <登录响应中的 data.token>
+```
+
+| 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| POST | /api/knowledge-base | 创建知识库 |
-| GET | /api/knowledge-base | 查询未删除的知识库列表，按 ID 倒序 |
-| GET | /api/knowledge-base/{id} | 查询未删除的单个知识库 |
-| PUT | /api/knowledge-base/{id} | 修改知识库名称 |
-| DELETE | /api/knowledge-base/{id} | 删除知识库及关联资料 |
+| POST | `/api/hui-answer/login` | 登录，传 `username`、`password`，返回 token |
+| POST / GET | `/api/knowledge-base` | 创建知识库 / 知识库列表 |
+| GET / PUT / DELETE | `/api/knowledge-base/{id}` | 查询 / 修改 / 删除知识库 |
+| POST / GET | `/api/knowledge-base/{kbId}/documents` | 上传文件 / 文档分页 |
+| GET / DELETE | `/api/knowledge-base/{kbId}/documents/{docId}` | 查询状态 / 删除文档 |
+| POST | `/api/knowledge-base/{kbId}/documents/{docId}/retry` | 重试失败文档 |
+| PUT | `/api/knowledge-base/{kbId}/documents/{docId}/enabled` | 启停，正文 `{"enabled":0}` 或 `{"enabled":1}` |
+| GET | `/api/knowledge-base/{kbId}/documents/{docId}/chunks` | 片段分页 |
+| POST | `/hui-ansWer/chat/stream` | 流式问答，注意路径大小写 |
+| POST | `/api/hui-answer/conversation/{conversationId}/stop` | 停止生成，传 `generationId` |
+| GET | `/api/hui-answer/conversation` | 当前用户会话列表 |
+| PUT / DELETE | `/api/hui-answer/conversation/{conversationId}` | 修改标题 / 删除会话及关联消息、摘要 |
+| GET | `/api/hui-answer/{conversationId}` | 查询自己的消息历史，含正文、引用和结束状态 |
+| POST | `/api/evaluation/retrieval` | 独立检索评测，策略及调用方式见评测脚本 |
 
-创建请求的 Content-Type 为 application/json，正文：
+文档和片段分页使用 `current`、`size`，默认 `1`、`10`。`enabled=0` 表示启用，`1` 表示禁用。文档详情与删除规则见 [文档管理接口](docs/document-management.md)。
+
+联调顺序：登录管理员，创建带 `name`、`description` 的知识库，以 `multipart/form-data` 的 `file` 字段上传文档，查询至 `status=success`，再发送问答。描述写明资料的业务范围，供路由选库使用。
+
+### SSE 约定
+
+首次提问省略 `conversationId`，续聊传入 `meta` 返回的会话 ID：
 
 ```json
-{"name":"员工制度"}
+{"question":"质量问题退货的运费由谁承担？","conversationId":null}
 ```
-
-返回 data 中包含 id、name、createTime、updateTime。名称去除首尾空白后保存，不能为空，长度最多 128。
-当前名称允许重复；ID 用于区分知识库。
-
-沿用 framework 的 Result 契约：成功 code 为字符串 "0"；参数错误/知识库不存在 code 为 "A000001"。
-业务和参数错误目前仍返回 HTTP 200，调用方需要读取 code 判断结果。
-响应使用 KnowledgeBaseRespDTO，避免直接输出实体中的 deleted 字段。
-当前尚未接入用户鉴权和知识库归属权限；这些接口用于本地单用户学习阶段。
-
-阅读顺序：CreateBaseReqDTO -> KnowledgeBaseController -> IKnowledgeBaseService /
-KnowledgeBaseServiceImpl -> KnowledgeBaseMapper -> t_knowledge_base。
-Controller 绑定 JSON 并启动参数校验，Service 校验并编排数据库调用，Mapper 通过 MyBatis-Plus 读写表。
-修改请求正文同样为 {"name":"新名称"}，返回更新后的知识库信息。
-保留用户已有 DELETE /api/knowledge-base/delete/{id} 路径，它与 DELETE /{id} 执行同一方法。
-删除时在一个数据库事务中：按 kbId 物理清理所有片段（包含逻辑删除片段），
-标记文档删除，再逻辑删除知识库。失败会回滚；不影响其他知识库。
-不存在或已删除的知识库返回 A000001；重复删除也按不存在处理。
-当前不清理磁盘原文件。文档上传与知识库删除通过同一知识库行锁协调；物理文件清理留到文件生命周期课程。
-## 第 03 课：文件上传与文本解析
-
-本课先打通：上传文件 -> 保存原文件 -> Tika 提取文字 -> 登记文档记录 -> 返回预览。
-解析是文件到文本的转换，尚未切分或调用 Embedding，也不会调用聊天模型。
-
-| 方法 | 地址 | 功能 |
-| --- | --- | --- |
-| POST | /api/knowledge-base/{kbId}/documents | 上传并解析一份文档 |
-| GET | /api/knowledge-base/{kbId}/documents | 查看该知识库的未删除文档 |
-
-先创建知识库，使用返回的真实 id 替换地址中的 {kbId}。
-在 Postman/Apifox 中选择 POST、Body -> form-data，添加字段 file，类型选 File，选择文件后发送。
-不要改成 JSON；客户端会生成 multipart/form-data 的 boundary，不要手动覆盖 Content-Type。
-
-Windows curl.exe 示例（将 1 换成自己的知识库 ID，路径换成自己的文件）：
-
-```powershell
-curl.exe -F "file=@D:/学习资料/员工制度.md" http://localhost:8080/api/knowledge-base/1/documents
-```
-
-### 存储、解析与状态
-
-- 支持 UTF-8 TXT、Markdown，以及带文字的 PDF；单文件最多 10MB。当前没有 OCR，不承诺保留复杂表格或版面。
-- 原文件默认存于 D:/develop/huiAnswer/data/documents/{kbId}/{UUID}.扩展名；展示名保存在 doc_name 中。同名上传不覆盖。
-- 可用 HUIANSWER_STORAGE_DIR 调整原文件目录；上传临时目录默认 D:/develop/huiAnswer/data/tmp，可用 HUIANSWER_UPLOAD_TEMP_DIR 调整。
-- Tika 解析器返回完整文本；接口最多返回 2000 字符 textPreview，textLength 是完整解析文本长度，previewTruncated 表示仅预览被截断。
-- 解析最多允许 100 万字符，超过则失败，不把截断内容当成完整文档。
-- 正常结果 status=pending、parseStatus=parsed：已解析，等待后续切分/向量化。只有完整导入完成才使用 success。
-- 内容无法解析时保留原文件和文档记录，status=failed、parseStatus=failed，返回安全的 errorMessage。
-- Result.code="0" 表示本次上传请求得到处理结果；调用方仍应检查 data.status，不能把 failed 当成导入成功。
-- 文档列表不返回正文或磁盘路径。JSON 元数据只保存格式、文件大小、解析阶段和文字数量；当前不单独保存完整解析文本，后续切分从原文件重新读取。
-
-阅读顺序：KnowledgeDocumentController -> KnowledgeDocumentServiceImpl.uploadDocument ->
-LocalDocumentStorage.save/open -> TikaDocumentParser.parse -> documentMapper。
-@RequestPart("file") 绑定上传的文件；kbId 来自路径，用于关联文档和约束知识库范围。
-
-### 当前取舍
-
-首版同步解析。上传与删除都在事务中对同一知识库行 SELECT FOR UPDATE，防止删除漏掉并发新增文档。
-锁覆盖本次文件存储和解析，同库导入串行，适合本地小文件学习；以后异步导入时需要缩短事务并协调任务状态。
-数据库事务不会回滚磁盘写入：数据库登记失败或存储中途失败可能留下文件，当前保留，不自动清理。
-删除知识库会清理数据库关联资料，暂不删除原文件，也未实现单文档删除、解析重试和用户权限。
-
-本课测试：真实 PostgreSQL + Spring MVC + Tika 验证归属、中文预览、列表隔离、失败记录及上传参数；
-实际生成的 PDF 验证文本提取、空白 PDF 拒绝与字符上限。另用独立临时应用完成真实 HTTP multipart/磁盘存储验收。
-集成测试使用内存文件存储及数据库回滚；HTTP 验收只清理本次数据库记录，原文件保留在 D:/develop/huiAnswer/data/verification。
-
-Tika 参考：https://tika.apache.org/3.2.3/gettingstarted.html 、https://tika.apache.org/3.2.3/examples.html
-
-## 第 04 课：文本分块
-
-上传解析后使用完整 parsed.text() 分块，返回并记录 chunkCount；不使用 2000 字符的预览作为分块输入。
-当前参数为 chunk-size=500、OVERLAP=100。算法按 Unicode 码点计数，普通汉字通常占 1，避免拆开 emoji 的 UTF-16 代理对。
-每块最多 500 个码点，相邻块重叠 100；短文保留，最后不满一块也保留，到全文末尾立即停止。
-全为空白的原文拒绝，纯空白窗口跳过；配置必须满足 chunkSize > 0、0 <= overlap < chunkSize。
-按 String.length() 返回的 textLength/预览长度与码点数量可能不同，尤其包含 emoji 时；两者也都不等于模型 token 数。
-
-文档目前仍是 pending + parsed，上传只计算分块数量。EmbeddingChunks.doEmbedding 已在第 05 课实现，但上传接口尚未调用 saveChunks。
-saveChunks 按序号将原文与向量配对，只保留返回数量对应检查，不再在业务层额外扫描每个向量的维度和数值。
-组装实体列表后使用 chunkMapper.insert(records, 100) 进行 JDBC 批处理，每批 100 条 flush；当前 Spring 事务统一提交，后续批次失败也会回滚已执行的批次。
-PgVectorTypeHandler 序列化时仍检查有限数值，数据库 vector(4096) 列负责维度约束。批处理仍需要遍历实体与序列化向量，优化的是数据库交互；未进行性能基准测试。
-参考：https://baomidou.com/guides/batch-operation/ 、https://jdbc.postgresql.org/documentation/use/#connection-parameters
-后续把 saveChunks 接入文档导入流程时，全部向量化与写库成功后再更新文档 success，失败状态与重试将在对应课程补齐。
-
-本次验证在独立的新源码副本中完成，避免旧 target/classes 遮蔽用户调整包路径后的问题。
-回归用例先在旧实现上复现短文丢失、重复尾块、emoji 边界和序号/向量配对错误；修复后 Maven verify 30 项通过，无跳过。
-真实 PostgreSQL 验证批量片段映射、审计字段填充、同一事务内文档外键可见，以及第一批 100 条已 flush 后第二批冲突仍全部回滚。测试向量仅用于验证映射，不代表真实模型已接通；不调用模型或删除磁盘文件。
-
-## 第 05 课：Embedding 文本向量化
-
-入口：rag/src/main/java/com/lhsg/HuiAnswer/rag/knowledge/embeddingUtil/EmbeddingChunks.java。
-输入 List<String> 文本块，输出按原输入顺序排列的 List<float[]>。这个类只调用模型，不写数据库。
-
-阅读顺序：
-1. doEmbedding：检查输入与配置，使用 subList 每次取最多 32 块，逐批调用并拼接结果。
-2. requestBatch：Map 组装 model/input/encoding_format/dimensions，Gson.toJson 转为 JSON；OkHttp 发 POST，处理 HTTP 状态。
-3. parseResponse：Gson.fromJson 转成 EmbeddingResponse/EmbeddingData 对象，再根据每项 index 放回本批位置；embedding 已是 float[]。
-4. 回看 KnowledgeChunkServiceImpl.saveChunks：按 i 配对原文与向量，再每批 100 条写数据库。
-
-请求地址默认 https://api.siliconflow.cn/v1/embeddings。按当前简化实现，url 配置主机地址 https://api.siliconflow.cn，客户端拼接 /v1/embeddings。
-模型使用 embedding-model，输出维度来自 rag.vector.dimension=4096；不是用 chat-model 生成回答。
-api-key 仍通过 HUIANSWER_AI_API_KEY 环境变量绑定，不在源码、配置或本笔记保存真实值。
-新增 embedding-batch-size=32、embedding-timeout-seconds=60；连接超时 10 秒，客户端复用连接。
-32 是首版对齐参考项目的批次选择，不是所有模型的通用上限；模型调用批次与数据库写入批次独立。
-
-RequestBody.create 把 JSON 字符串转为 UTF-8 请求体；newCall(request).execute() 同步发请求，response.body().string() 读取响应正文。
-Gson 负责 Java/JSON 转换，OkHttpClient 负责网络传输；try-with-resources 关闭 Response。真正的模型推理由第三方完成。
-Gson 阅读重点：gson.toJson(body) 把普通 Map 转为 JSON 字符串；gson.fromJson(body, EmbeddingResponse.class) 按字段名填充响应对象。
-EmbeddingResponse.data 是 List<EmbeddingData>；每项 Integer index 表示本批位置，float[] embedding 是模型返回的向量。两个响应类使用 static 嵌套类，不依赖外围对象。
-Gson 2.13.1 的版本已由父 POM 管理，rag 子模块只声明依赖。参考：https://google.github.io/gson/UserGuide.html。
-每个 Call 单独设置完整请求超时，覆盖连接、发送和读取正文；读写不再单独使用更短的默认超时。
-响应中 index 对应本批 input 的位置；不能把它直接当作整个文档的序号。
-保留数量、index 范围/重复及必要的响应结构检查，保证文本与向量一一对应；没有恢复逐元素维度/有限值预校验。
-401/403、429、其他 HTTP 错误、超时、网络故障、中断和格式错误会转为 ServiceException。
-请求前检查线程中断，I/O 报告中断时保留标志；任意批次失败都不返回部分结果。当前不实现应用层重试或模型切换，OkHttp 关闭连接失败重试与重定向。
-错误不回显请求头、API key、第三方响应正文或 JSON 解析原文。
-
-验证：本地 HTTP 模拟服务新增 25 项测试通过，包括倒序返回、33 块跨批配对、缺配置、坏响应、后续批失败、限流、超时和中断。
-已有 30 项 CRUD/上传/解析/数据库回归通过。另用两条合成制度文本调用真实服务，返回 2 个 4096 维向量。
-切换 OkHttp 后，完整 Maven verify 55/55 通过，无跳过；用相同两条合成文本验证真实接口，仍返回两个 4096 维向量。
-切换 Gson 后，在独立源码副本中 Maven verify 仍是 55/55 通过，无跳过；本地 HTTP 用例验证中文、引号、反斜杠与换行的序列化，以及响应对象解析和 index 配对。
-没有批量向量化用户文件，没有新增业务记录或重启用户正在运行的应用。
-上传接口现已改为 MQ 异步导入：登记文档并返回 ID，后台解析、向量化、写片段；通过单文档查询接口读取最终状态。
-
-参考：https://api-docs.siliconflow.cn/docs/api/embeddings-post 、https://github.com/square/okhttp/blob/parent-4.12.0/okhttp/src/main/kotlin/okhttp3/Call.kt
-
-## 本地数据库
-
-现有 Docker 容器：postgres，镜像 pgvector/pgvector:pg16，宿主机端口 5432。
-项目数据库：huianswer。建表脚本：sql/01_knowledge.sql。
-
-```powershell
-.\tools\init-db.ps1
-```
-
-脚本创建独立 huianswer 数据库，并在该库启用 vector 扩展、创建三张表；不修改 frag 和 ragent。
-重复执行可用于初始化空库；CREATE TABLE IF NOT EXISTS 不会升级已有表，后续字段变更要编写迁移 SQL。
-
-换机器时，在 huianswer 数据库按编号依次执行 sql/01～10，补齐管理员、创建者、对话及摘要等表字段。
-关键词检索字段已同步到 sql/01_knowledge.sql；已有库执行 sql/10_chunk_keyword_search.sql：
-- search_text：Java/HanLP 分词后写入，保留词序与重复词。
-- search_vector：根据 search_text 自动生成的 tsvector；配套 GIN 索引用于关键词匹配。
-
-迁移脚本可以重复执行，不会清空或覆盖旧片段。旧片段若没有分词结果，需重新上传并处理文档；
-新增字段本身不能为中文原文补出 HanLP 分词结果。当前本地库已有这两个字段和索引。
-
-## 密钥和数据库密码
-
-真实值保存在 Windows 当前用户环境变量，不在代码、YAML 或 .env.example 中：
-
-- HUIANSWER_DB_PASSWORD：PostgreSQL 密码。
-- HUIANSWER_AI_API_KEY：硅基流动 API key，用于向量化、重排序及现有评分脚本。
-- DEEPSEEK_API_KEY：DeepSeek 官网 API key，用于应用内的回答、改写、意图路由及摘要。
-
-官网聊天地址默认为 https://api.deepseek.com/chat/completions，模型为 deepseek-flash。
-可选覆盖项为 DEEPSEEK_API_URL（仅主机地址）和 DEEPSEEK_CHAT_MODEL。
-官网思考开关使用 thinking.type（enabled / disabled），与硅基的 enable_thinking 不同。
-回答保留当前按意图选择的思考模式；改写、意图路由和摘要关闭思考。
-回答输出预算为 8192 token，包含思考与正文；这是上限，不是每次固定消耗。
-官网当前模型说明：https://api-docs.deepseek.com/ 。旧 deepseek-v4-flash 名称现由 V4.1 Flash 服务；
-与硅基 V4 的测试结果应按实际模型版本记录，不能全部归因于调用渠道。
-修改用户环境变量后，完全退出 IDEA，再通过下方 start-idea.ps1 启动以读取新值。
-
-application.yml 通过 ${变量名} 读取。可选的连接地址、用户名、模型等变量名见 .env.example。
-.env.example 只是变量名示例，Spring Boot 不会自动把它当配置加载。
-用户环境变量不是加密保险库，本机同一用户的程序可以读取；不要打印完整环境变量或分享带值的截图。
-
-IDEA 和终端继承启动它们的父进程环境。如果从一直未退出的 Nexus 等桌面启动器打开 IDEA，即使重启 IDEA，也可能继续继承旧环境。
-
-在 IDEA 中运行项目：先保存代码并完全退出 IDEA，再从项目根目录运行下面的脚本。脚本读取 Windows 用户环境变量后打开 IDEA，不保存或输出密码和 API Key。之后在 IDEA 中正常点击运行即可。
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-idea.ps1
-```
-
-如果 IDEA 安装路径变了，可使用 -IdeaPath 指定 idea64.exe。不要在旧 IDEA 进程还运行时执行，因为启动请求会转交旧进程。
-
-直接构建并启动项目，也可以使用已有脚本主动读取环境变量：
-
-```powershell
-.\tools\start-local.ps1
-```
-
-脚本默认 JDK 17 位于 D:\develop\java\jdk_17，先构建，再启动 rag 的可执行 jar。
-当前启动不需要调用模型；接入模型的课程中再验证 API key 与接口。
-
-## 4096 维的取舍
-
-- pgvector 的 vector 类型可存储 4096 维，当前表固定为 vector(4096)。
-- 存储上限和近似索引上限不同：普通 vector 的 HNSW/IVFFlat 索引最多 2000 维。
-- halfvec 近似索引最多 4000 维，也不能直接索引当前 4096 维。
-- 当前使用知识库范围过滤后，按 embedding <=> 问题向量进行精确余弦距离排序。
-- 未创建向量近似索引；以后按实际数据量讨论降维或量化方案。
-- 改嵌入模型或输出维度时，要同时考虑表结构与已有文档的重新向量化，不能只改配置。
-
-官方说明：https://github.com/pgvector/pgvector
-
-## 建议阅读顺序
-
-1. sql/01_knowledge.sql：字段、归属外键、状态和普通索引。
-2. knowledge/dao/entity：与你刚设计的三种数据对象对应。
-3. knowledge/dao/mapper：BaseMapper 的泛型是实体；deletePhysicallyByDocId 明确物理清理。
-4. knowledge/dao/handler：把 Java float[] / JSON 文本转换成 PostgreSQL 的 vector / jsonb。
-5. config/DatabaseMetaObjectHandler：填充创建时间、更新时间和删除标识。
-
-实体类位于 rag/src/main/java/com/lhsg/HuiAnswer/rag 下。
-
-文档采用逻辑删除。删除接口在同一事务中标记文档删除并物理清理片段，保留磁盘原文件。
-自定义检索 SQL 显式排除已删除知识库/文档/片段，并限定处理成功且启用的文档。
-文档启停、删除和 MP 分页接口见 [文档管理接口](docs/document-management.md)。
-
-## 验证
-
-真实 PostgreSQL 集成测试：KnowledgeDatabaseIntegrationTest、KnowledgeBaseApiIntegrationTest、KnowledgeBaseMutationIntegrationTest、KnowledgeDocumentApiIntegrationTest；文本解析用例为 TikaDocumentParserTest；分块与配对验证为 KnowledgeChunkServiceTest、KnowledgeChunkPersistenceIntegrationTest；本地 HTTP 向量接口验证为 EmbeddingChunksTest。
-验证向量与 JSON 映射、知识库范围、按文档物理清理、维度约束和归属约束；以及知识库 CRUD、参数校验、逻辑删除过滤和响应 DTO。关联删除覆盖误删隔离、失败回滚及审计时间。
-普通用例使用测试事务回滚；专用故障用例关闭外层测试事务，验证 Service 自身回滚，然后按本用例 ID 清理专用记录。测试不保留业务记录、不调用模型或删除磁盘文件。
-
-```powershell
-$env:JAVA_HOME = 'D:\develop\java\jdk_17'
-$env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
-$env:HUIANSWER_DB_PASSWORD = [Environment]::GetEnvironmentVariable('HUIANSWER_DB_PASSWORD', 'User')
-mvn -B -ntp "-Dmaven.repo.local=D:/develop/repo" -pl rag -am verify
-```
-
-未提供 HUIANSWER_DB_PASSWORD 时，这组真实数据库测试会跳过。执行前需要 Docker 中数据库和表已初始化。
-
-## 第 06 课：RocketMQ 异步文档导入
-
-文档上传不再同步等待模型。按 shortlink 的写法发送自定义消息对象，消费者在事务外解析、分块和向量化，最后通过短事务保存片段和成功状态。消费幂等留到后续学习时实现。
-
-阅读流程、消息实体、本地启动与当前边界见 [文档异步导入](docs/document-ingestion-mq.md)。新数据库使用 `sql/01_knowledge.sql`；已有数据库本次不需要迁移。
-
-## 停止本次回答生成
-
-问答仍使用 POST /hui-ansWer/chat/stream，需要 username、token 登录头。
-开始时的 meta 事件新增 generationId，同一会话每次生成都会分配不同 ID：
 
 ```text
 event: meta
 data: {"conversationId":123,"generationId":"本次生成的UUID"}
+
+event: delta
+data: 依据当前资料，
+
+event: delta
+data: 需要区分退货原因和运费规则。
+
+event: done
+data: [DONE]
 ```
 
-收到 meta 后即可提交停止请求，无需等待第一个字：
+- SSE 的 `delta` 只输出答案正文，不输出模型思考过程。客户端应按事件解析，不能按普通 JSON 响应读取。
+- `generationId` 标识本次生成，收到 `meta` 即可提交停止请求；停止时尽可能发送 `stopped`，其他失败发送 `error`。
+- 回答中的 `[1]` 等编号对应本次资料。来源列表保存在消息的 `sources` 字段，可从历史接口读取；正常 SSE 当前没有单独的来源列表事件，前端对接时需补齐这个输出。
+- `rag.evaluation.enabled=true` 时额外发送 `evaluation`，内容为本次真正送入回答模型的片段，空资料也发送 `[]`。日常使用可关闭此开关。
 
-```http
-POST /api/hui-answer/conversation/123/stop
-Content-Type: application/json
+## 评测与结果
 
-{"generationId":"本次生成的UUID"}
+### 数据与口径
+
+使用合成的星澜商城语料，包含商品、订单、配送、售后四个知识库。v2 在原 16 份资料上增加 12 份有适用范围差异的干扰文档，共 28 份；语料、题目和参考答案分别保存。
+
+- 独立检索对照：16 道有答案的开发题，每题比较 `vector`、`mixSearch`、`rerank`，统一取前 6 个片段，使用预设的正确知识库范围。
+- 完整问答：20 道开发题直接调用真实问答接口，不预先传正确知识库；其中 16 道评分，4 道澄清、闲聊或无答案题人工检查。多轮题的前置回答也由真实接口生成。
+- 评分证据来自本次 SSE `evaluation` 的实际片段和 `delta` 的实际回答，不回查数据库替换证据；参考答案仅供评分，不进入业务模型请求。
+
+### 2026-10-16 官网适配测试快照
+
+| 指标 | 均分 | 用途 |
+| --- | ---: | --- |
+| Context Recall | 0.9479 | 参考答案的事实是否能从最终资料中找到支持 |
+| Context Precision | 0.9655 | 有用资料是否排在靠前位置 |
+| Faithfulness | 0.9190 | 回答的事实是否有实际上下文支持 |
+| Answer Point Coverage | 0.9479 | 自定义必要要点覆盖率，补充检查答案是否漏答 |
+| Factual Correctness | 0.5138 | 与参考答案对照的辅助 F1，结合有效扩写与逐题判定阅读 |
+
+同批 20 道主问题的首个正文响应时间：平均 5.347 秒、中位数 3.716 秒、P95 12.094 秒。计时从问答 HTTP 请求发出至收到首个非空正文，包含准备阶段与模型等待，不用 `meta` 或思考内容冒充首字。
+
+采集批次 `20261016-223825-250641`，评分批次 `20261016-225243-922140`，评分口径 `generation-v3`、参考答案版本 `generation-dev-v2`。该快照来自官网适配测试分支；本地 `runs` 产物默认不提交。模型、语料、参考答案和评分口径变化时，应分开记录，开发集分数不等同于真实用户正确率。
+
+### 脚本入口
+
+| 脚本 | 用途 |
+| --- | --- |
+| [collect_retrieval.py](evaluation/collect_retrieval.py) | 采集三种检索策略的片段与耗时 |
+| [score_retrieval.py](evaluation/score_retrieval.py) | 用 Ragas 评估召回与排序 |
+| [collect_generation.py](evaluation/collect_generation.py) | 采集真实 SSE 问答、资料、首字时间及过程事件 |
+| [score_generation.py](evaluation/score_generation.py) | 对已采集问答计算五项指标 |
+| [report_low_scores.py](evaluation/report_low_scores.py) | 将主要指标低于各自平均值的题整理成易读报告 |
+| [generation_pipeline_report.py](evaluation/generation_pipeline_report.py) | 汇总过程事件和首字响应时间 |
+
+采集使用 Python 3.10+；评分依赖见 [requirements-eval.txt](evaluation/requirements-eval.txt)，建议独立虚拟环境，本机放在 `D:/develop/huiAnswer/eval-venv`。采集需应用已启动、资料处理成功、登录 token 有效；评分只读采集结果，但会产生评委模型调用费用。
+
+```powershell
+python evaluation/collect_retrieval.py --dataset evaluation/xinglan-shop-v2 --dry-run
+python evaluation/collect_retrieval.py --dataset evaluation/xinglan-shop-v2
+python evaluation/score_retrieval.py --results "<本次检索采集目录>/results.jsonl"
+
+python evaluation/score_generation.py --results "<本次问答采集目录>/results.jsonl"
+python evaluation/report_low_scores.py --scores "<本次评分目录>/scores.jsonl"
 ```
 
-停止请求同样带 username、token，校验会话与生成任务都属于当前用户。
-返回 code="0" 表示停止要求已提交，或本次任务已经结束；不代表跨实例任务在返回的一刻已经完成清理。
+完整过程采集目前配合 `feature/evaluation` 分支后端使用：主分支发送 `evaluation`，不发送 `evaluation_trace`、`evaluation_stats`；生成采集脚本默认要求三类事件，不能直接把两种模式混用。请用 `--results`、`--scores` 固定要分析的批次，避免默认选到其他语料或旧运行。
 
-- 停止请求先写共享 Redis 停止标记，同实例立即取消当前 Call，再通过 Redisson RTopic 发布 generationId。
-- 每个实例启动时订阅 huiAnswer:chat:stop:notify 频道，收到通知后只取消自己持有的对应任务。
-- 普通发布订阅不补发断线期间的通知；每个实例每 5 秒批量检查自己的活动任务，补处理发布失败或漏掉的通知。
-- 应用关闭时只移除自己的订阅监听；订阅回调负责取消 Call，消息入库和释放锁由工作线程完成。
-- 已生成的部分正文按 failed 保存，errorMessage 为“用户停止生成”，不会作为完整成功轮次进入模型历史。
-- 工作线程负责消息入库、结束 SSE 和释放会话锁；停止接口不跨线程解锁。
-- 连接仍可写时发送 stopped 事件，包含 generationId、message；正常完成仍发送 done。
-- 已正常完成的回答保留 success，晚到的停止请求不会覆盖它。
-- 任务结束时清理本地对象与 Redis 记录；任务记录 TTL 默认 600 秒，须大于 SSE 时限。
-- 当前主动取消最终流式模型 Call；正在进行的改写、检索和重排序在本阶段返回后检查停止标记。
+## 当前限制与后续对接
 
-配置在 rag.chat：stop-check-interval-ms=5000、generation-ttl-seconds=600。
-所有应用实例需要连接同一个 Redis；当前批量读取按共享单节点 Redis 实现。
-任务对象位于 chat/build/task/ChatGenerationTask，管理类为 ChatGenerationManager。
+- 前端待实现；正常 SSE 的独立来源事件待补齐，再接引用展示。
+- 管理员身份当前按账号名识别，未实现完整角色权限系统。
+- 模型选库仍可能遗漏跨库子问题；统一 Top 6 重排序可能挤掉某个子问题的关键资料，这两项需结合逐题证据继续改进。
+- 首字响应仍有长尾，受改写、路由、外部模型响应共同影响，当前数据未覆盖大规模并发。
+- 停止可主动取消最终问答模型的 Call；改写、检索和重排序在阶段返回后检查停止标记。
+- 原文件使用本地磁盘，无 OCR；跨实例文档消费需要共享可读的文件存储。Redis 消费幂等有有效期，不代表永久去重或消息只处理一次。
+- 提示词与结构化结果校验已做输入边界约束，仍需持续验证模型行为，不承诺完全杜绝提示词注入。
+
+建议从 `ChatServiceImpl` 阅读完整问答编排，再看 `RewriteQuestion`、`SubQuestionProcessor`、`SearchChunks`、`RerankChunks`；文档链路从 `KnowledgeDocumentServiceImpl`、`DocumentProducer`、`DocumentConsumer` 阅读；记忆与停止分别看 `SummaryServiceImpl`、`ChatGenerationManager`。

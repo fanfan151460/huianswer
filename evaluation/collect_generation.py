@@ -60,7 +60,7 @@ def read_events(response):
     # 未用空行结束的事件不当成完成事件；ask 会检查 done。
 
 
-def ask(question, conversation_id, base_url, headers, timeout):
+def ask(question, conversation_id, base_url, headers, timeout, require_trace=True):
     result = {"status": "error", "conversation_id": conversation_id, "generation_id": None,
               "response": "", "chunks": [], "retrieved_contexts": [], "error": None,
               "first_token_ms": None, "pipeline_trace": None, "generation_stats": None}
@@ -124,7 +124,7 @@ def ask(question, conversation_id, base_url, headers, timeout):
             raise RuntimeError("未收到 meta，无法确定问答所属会话")
         if not got_evaluation:
             raise RuntimeError("未收到 evaluation，请启用 rag.evaluation.enabled 并重启服务")
-        if result["pipeline_trace"] is None or result["generation_stats"] is None:
+        if require_trace and (result["pipeline_trace"] is None or result["generation_stats"] is None):
             raise RuntimeError("未收到过程评测事件，请重启加载本次代码并开启 rag.evaluation.enabled")
         if not "".join(fragments).strip():
             raise RuntimeError("回答正文为空")
@@ -143,7 +143,7 @@ def ask(question, conversation_id, base_url, headers, timeout):
     return result
 
 
-def collect_one(case, base_url, headers, timeout):
+def collect_one(case, base_url, headers, timeout, require_trace=True):
     """每题新会话；多轮题通过真实问答预热，只向服务发送历史中的 user 输入。"""
     row = {
         "case_id": case["id"], "category": case["category"],
@@ -163,7 +163,7 @@ def collect_one(case, base_url, headers, timeout):
     for message in case.get("history", []):
         if message["role"] != "user":
             continue
-        warmup = ask(message["content"], conversation_id, base_url, headers, timeout)
+        warmup = ask(message["content"], conversation_id, base_url, headers, timeout, require_trace)
         row["conversation_id"] = warmup["conversation_id"]
         if warmup["status"] != "success":
             row["error"] = "前置问答失败：" + str(warmup["error"])
@@ -177,7 +177,7 @@ def collect_one(case, base_url, headers, timeout):
             {"role": "user", "content": message["content"]},
             {"role": "assistant", "content": warmup["response"]},
         ])
-    result = ask(case["question"], conversation_id, base_url, headers, timeout)
+    result = ask(case["question"], conversation_id, base_url, headers, timeout, require_trace)
     row.update(result)
     return row
 
@@ -191,6 +191,8 @@ def main():
     parser.add_argument("--case-ids", nargs="+", help="只采集指定题号，例如 XL-030")
     parser.add_argument("--timeout", type=float, default=180, help="HTTP读取无数据的超时秒数")
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--allow-missing-trace", action="store_true",
+                        help="兼容未加过程埋点的后端；仍记录首字时间，不要求 evaluation_trace/stats")
     parser.add_argument("--dry-run", action="store_true", help="只检查题集，不访问服务")
     args = parser.parse_args()
     if args.limit < 0 or not args.timeout > 0:
@@ -199,6 +201,8 @@ def main():
     cases = load_cases(dataset, args.limit, args.case_ids)
     warmups = sum(message["role"] == "user" for case in cases for message in case.get("history", []))
     print(f"开发题：{len(cases)}；前置问答：{warmups}；预计调用问答接口：{len(cases) + warmups} 次")
+    if args.allow_missing_trace:
+        print("兼容模式：允许缺少过程事件；仍要求真实正文、参考片段事件和 done，仅能比较已有计时。")
     if args.dry_run:
         print("题集检查通过；未调用接口，未创建结果文件。")
         return 0
@@ -211,7 +215,7 @@ def main():
     directory = (args.output_dir or dataset / "runs" / "generation").resolve() / run_id
     directory.mkdir(parents=True, exist_ok=False)
     metadata = {
-        "collection_version": "generation-trace-v1",
+        "collection_version": "generation-trace-v1", "trace_required": not args.allow_missing_trace,
         "run_id": run_id, "input_mode": "end_to_end_chat", "base_url": args.base_url.rstrip("/"),
         "cases_sha256": hashlib.sha256((dataset / "cases" / "dev.jsonl").read_bytes()).hexdigest(),
         "case_ids": [case["id"] for case in cases], "planned_cases": len(cases),
@@ -223,7 +227,8 @@ def main():
     try:
         with (directory / "results.jsonl").open("x", encoding="utf-8") as output:
             for case in cases:
-                row = collect_one(case, args.base_url.rstrip("/"), headers, args.timeout)
+                row = collect_one(case, args.base_url.rstrip("/"), headers, args.timeout,
+                                  require_trace=not args.allow_missing_trace)
                 collected.append(row)
                 output.write(json.dumps(row, ensure_ascii=False) + "\n")
                 output.flush()

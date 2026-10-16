@@ -24,13 +24,11 @@ public class InterceptorConfig implements WebMvcConfigurer {
         registry.addInterceptor(loginReflushInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns("/api/hui-answer/login")
-                .excludePathPatterns("/api/hui-answer/register")
                 .order(10);
         registry.addInterceptor(loginInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns("/api/knowledge-base/**")
                 .excludePathPatterns("/api/hui-answer/login")
-                .excludePathPatterns("/api/hui-answer/register")
                 .order(5);
     }
 }

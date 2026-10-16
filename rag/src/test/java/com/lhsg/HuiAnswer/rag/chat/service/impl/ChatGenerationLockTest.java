@@ -50,7 +50,7 @@ class ChatGenerationLockTest {
         req.setConversationId(1L);
         req.setQuestion("测试问题");
         ApiUrl apiUrl = new ApiUrl();
-        apiUrl.setUrl("http://test.invalid");
+        apiUrl.setChatUrl("http://test.invalid");
         apiUrl.setChatPath("/chat");
         // 拦截器直接返回内存 SSE，绝不建立网络连接。
         OkHttpClient http = new OkHttpClient.Builder().addInterceptor(chain ->
@@ -105,6 +105,46 @@ class ChatGenerationLockTest {
         verify(manager, times(1)).finish(task);
         assertTrue(task.isFinished());
         assertFalse(task.getStopped().get());
+    }
+
+    @Test
+    void reasoningOnlyLengthCompletionCannotBeReportedAsSuccess() {
+        String stream = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"测试思考\"},\"finish_reason\":null}]}\n\n"
+                + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n"
+                + "data: [DONE]\n\n";
+        assertThrows(ServiceException.class, () -> ReflectionTestUtils.invokeMethod(service, "readStream",
+                ResponseBody.create(stream, MediaType.get("text/event-stream")),
+                new com.lhsg.HuiAnswer.rag.chat.dto.resp.LLMChatResp(), new StringBuilder(),
+                task));
+    }
+
+    @Test
+    void capturesThinkingUsageWithoutSendingItAsAnswer() {
+        String stream = "data: {\"usage\":null,\"choices\":[{\"delta\":{\"reasoning_content\":\"内部思考\"},\"finish_reason\":null}]}\n\n"
+                + "data: {\"usage\":{\"total_tokens\":100,\"completion_tokens\":12,\"completion_tokens_details\":{\"reasoning_tokens\":8}},"
+                + "\"choices\":[{\"delta\":{\"content\":\"答复\"},\"finish_reason\":\"stop\"}]}\n\n"
+                + "data: [DONE]\n\n";
+        var response = new com.lhsg.HuiAnswer.rag.chat.dto.resp.LLMChatResp();
+        assertDoesNotThrow(() -> ReflectionTestUtils.invokeMethod(service, "readStream",
+                ResponseBody.create(stream, MediaType.get("text/event-stream")),
+                response, new StringBuilder(), task));
+        assertEquals("答复", response.getAnswer());
+        assertEquals(100, response.getTokens());
+        assertEquals(Integer.valueOf(12), response.getCompletionTokens());
+        assertEquals(Integer.valueOf(8), response.getReasoningTokens());
+    }
+
+    @Test
+    void lengthCompletionWithBodyKeepsPartialAnswer() {
+        String stream = "data: {\"choices\":[{\"delta\":{\"content\":\"部分回答\"},\"finish_reason\":\"length\"}]}\n\n"
+                + "data: [DONE]\n\n";
+        var response = new com.lhsg.HuiAnswer.rag.chat.dto.resp.LLMChatResp();
+        StringBuilder answer = new StringBuilder();
+        assertDoesNotThrow(() -> ReflectionTestUtils.invokeMethod(service, "readStream",
+                ResponseBody.create(stream, MediaType.get("text/event-stream")),
+                response, answer, task));
+        assertEquals("部分回答", response.getAnswer());
+        assertEquals("length", response.getFinishReason());
     }
 
     @Test

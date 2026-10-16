@@ -17,6 +17,12 @@ public class LLMChatResp {
     /** 回答消耗 token */
     private int tokens;
 
+    /** 本次输出 token 数，包含思考；接口未提供时为 null。 */
+    private Integer completionTokens;
+
+    /** 思考 token 数；接口未提供时为 null。 */
+    private Integer reasoningTokens;
+
     /** 结束原因 */
     private String finishReason;
 

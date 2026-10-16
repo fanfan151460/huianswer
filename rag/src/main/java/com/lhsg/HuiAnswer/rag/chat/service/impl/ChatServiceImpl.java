@@ -80,9 +80,9 @@ public class ChatServiceImpl implements IChatService {
 
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
-    @Value("${rag.ai.siliconflow.chat-model}")
+    @Value("${rag.ai.deepseek.chat-model}")
     private String chatModel;
-    @Value("${rag.ai.siliconflow.api-key}")
+    @Value("${rag.ai.deepseek.api-key}")
     private String apiKey;
     @Value("${rag.chat.max-model-wait}")
     private Long modelWait;
@@ -333,10 +333,16 @@ public class ChatServiceImpl implements IChatService {
             }
         }
         resp.setAnswer(answer.toString());
-        // 截断(length)也算生成完成：正文是完整的，只是没写完，存 success 并留在历史里。
+        // length 可以保留已生成的部分正文；没有正文时不能作为成功回答入库。
         String finishReason = resp.getFinishReason();
         if (!"stop".equals(finishReason) && !"length".equals(finishReason)) {
             throw new ServiceException("模型回答异常终止");
+        }
+        if (answer.toString().isBlank()) {
+            log.warn("模型返回空正文，model={}，finishReason={}，answerMaxTokens={}，completionTokens={}，reasoningTokens={}",
+                    resp.getModel(), finishReason, answerMaxTokens,
+                    resp.getCompletionTokens(), resp.getReasoningTokens());
+            throw new ServiceException("模型未生成回答正文，请稍后再试");
         }
     }
 
@@ -350,10 +356,25 @@ public class ChatServiceImpl implements IChatService {
         if (model != null && !model.isJsonNull()) {
             resp.setModel(model.getAsString());
         }
-        JsonObject usage = chunk.getAsJsonObject("usage");
-        if (usage != null && usage.has("total_tokens") && !usage.get("total_tokens").isJsonNull()) {
+        JsonElement usageElement = chunk.get("usage");
+        if (usageElement != null && usageElement.isJsonObject()) {
+            JsonObject usage = usageElement.getAsJsonObject();
             // usage 是累计统计：每次覆盖，只保留最终值，不逐条相加。
-            resp.setTokens(usage.get("total_tokens").getAsInt());
+            JsonElement totalTokens = usage.get("total_tokens");
+            if (totalTokens != null && !totalTokens.isJsonNull()) {
+                resp.setTokens(totalTokens.getAsInt());
+            }
+            JsonElement completionTokens = usage.get("completion_tokens");
+            if (completionTokens != null && !completionTokens.isJsonNull()) {
+                resp.setCompletionTokens(completionTokens.getAsInt());
+            }
+            JsonElement details = usage.get("completion_tokens_details");
+            if (details != null && details.isJsonObject()) {
+                JsonElement reasoningTokens = details.getAsJsonObject().get("reasoning_tokens");
+                if (reasoningTokens != null && !reasoningTokens.isJsonNull()) {
+                    resp.setReasoningTokens(reasoningTokens.getAsInt());
+                }
+            }
         }
         JsonArray choices = chunk.getAsJsonArray("choices");
         if (choices == null || choices.isEmpty()) {

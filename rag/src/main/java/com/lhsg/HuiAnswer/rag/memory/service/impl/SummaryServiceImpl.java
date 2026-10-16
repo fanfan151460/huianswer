@@ -53,9 +53,9 @@ public class SummaryServiceImpl implements ISummaryService {
     private Boolean ifSummary;
     @Value("${rag.memory.turns}")
     private int maxTurns;
-    @Value("${rag.ai.siliconflow.api-key}")
+    @Value("${rag.ai.deepseek.api-key}")
     private String apiKey;
-    @Value("${rag.ai.siliconflow.chat-model}")
+    @Value("${rag.ai.deepseek.chat-model}")
     private String chatModel;
     @Value("${rag.chat.max-model-wait}")
     private long modelWait;
@@ -176,6 +176,10 @@ public class SummaryServiceImpl implements ISummaryService {
         body.addProperty("stream", false);
         body.addProperty("temperature", summaryTemperature);
         body.addProperty("max_tokens", summaryMaxTokens);
+        // 官网默认开启思考；摘要只需压缩原文，显式关闭。
+        JsonObject thinking = new JsonObject();
+        thinking.addProperty("type", "disabled");
+        body.add("thinking", thinking);
 
         if (StrUtil.isBlank(apiKey)) {
             throw new ServiceException("摘要模型密钥未配置");

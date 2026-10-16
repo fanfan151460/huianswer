@@ -186,7 +186,17 @@ Gson 2.13.1 的版本已由父 POM 管理，rag 子模块只声明依赖。参�
 真实值保存在 Windows 当前用户环境变量，不在代码、YAML 或 .env.example 中：
 
 - HUIANSWER_DB_PASSWORD：PostgreSQL 密码。
-- HUIANSWER_AI_API_KEY：硅基流动 API key。
+- HUIANSWER_AI_API_KEY：硅基流动 API key，用于向量化、重排序及现有评分脚本。
+- DEEPSEEK_API_KEY：DeepSeek 官网 API key，用于应用内的回答、改写、意图路由及摘要。
+
+官网聊天地址默认为 https://api.deepseek.com/chat/completions，模型为 deepseek-flash。
+可选覆盖项为 DEEPSEEK_API_URL（仅主机地址）和 DEEPSEEK_CHAT_MODEL。
+官网思考开关使用 thinking.type（enabled / disabled），与硅基的 enable_thinking 不同。
+回答保留当前按意图选择的思考模式；改写、意图路由和摘要关闭思考。
+回答输出预算为 8192 token，包含思考与正文；这是上限，不是每次固定消耗。
+官网当前模型说明：https://api-docs.deepseek.com/ 。旧 deepseek-v4-flash 名称现由 V4.1 Flash 服务；
+与硅基 V4 的测试结果应按实际模型版本记录，不能全部归因于调用渠道。
+修改用户环境变量后，完全退出 IDEA，再通过下方 start-idea.ps1 启动以读取新值。
 
 application.yml 通过 ${变量名} 读取。可选的连接地址、用户名、模型等变量名见 .env.example。
 .env.example 只是变量名示例，Spring Boot 不会自动把它当配置加载。

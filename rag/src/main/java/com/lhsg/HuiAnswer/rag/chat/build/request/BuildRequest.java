@@ -28,7 +28,9 @@ public class BuildRequest {
         body.add("messages", input);
         body.addProperty("temperature", chatRequest.getTemperature());
         body.addProperty("max_tokens", chatRequest.getMaxTokens());
-        body.addProperty("enable_thinking", chatRequest.getThinking());
+        JsonObject thinking = new JsonObject();
+        thinking.addProperty("type", Boolean.TRUE.equals(chatRequest.getThinking()) ? "enabled" : "disabled");
+        body.add("thinking", thinking);
         body.addProperty("stream", true);
         return body;
     }

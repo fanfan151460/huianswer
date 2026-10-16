@@ -79,19 +79,24 @@ rag:
     stop-check-interval-ms: 5000
     # 须大于 SSE 时限，实例异常退出后也能自动回收任务记录。
     generation-ttl-seconds: 600
-    # 单次回答的最大生成 token。撞到上限时 finish_reason=length，按成功处理并留在历史里。
-    answer-max-tokens: 2048
+    # 官网思考模式需给思考过程和正文一起预留输出预算；这是上限，不是固定消耗量。
+    # length 只有在已生成非空正文时才保留为成功回答。
+    answer-max-tokens: 8192
     answer-temperature: 0.3
   ai:
-    provider: siliconflow
+    provider: deepseek
+    # 回答、改写、意图路由和摘要走官网，单独使用官网密钥。
+    deepseek:
+      url: ${DEEPSEEK_API_URL:https://api.deepseek.com}
+      chat-path: /chat/completions
+      api-key: ${DEEPSEEK_API_KEY:}
+      chat-model: ${DEEPSEEK_CHAT_MODEL:deepseek-flash}
     siliconflow:
       url: ${HUIANSWER_AI_URL:https://api.siliconflow.cn}
-      # OpenAI 兼容协议的端点路径，只有 host 由上面的 url 提供
-      chat-path: /v1/chat/completions
+      # 向量化与重排序继续使用硅基流动。
       embeddings-path: /v1/embeddings
       rerank-path: /v1/rerank
       api-key: ${HUIANSWER_AI_API_KEY:}
-      chat-model: ${HUIANSWER_CHAT_MODEL:deepseek-ai/DeepSeek-V4-Flash}
       rerank-model: ${HUIANSWER_RERANK_MODEL:BAAI/bge-reranker-v2-m3}
       embedding-model: ${HUIANSWER_EMBEDDING_MODEL:Qwen/Qwen3-Embedding-0.6B}
       # 每次 HTTP 请求的文本块数量，与数据库写入批次独立。

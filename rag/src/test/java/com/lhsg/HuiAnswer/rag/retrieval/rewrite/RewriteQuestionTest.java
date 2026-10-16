@@ -52,7 +52,7 @@ class RewriteQuestionTest {
                     .build();
         }).build();
         ApiUrl apiUrl = new ApiUrl();
-        apiUrl.setUrl("http://rewrite.test");
+        apiUrl.setChatUrl("http://rewrite.test");
         apiUrl.setChatPath("/v1/chat/completions");
         rewrite = new RewriteQuestion(client, gson, apiUrl);
         ReflectionTestUtils.setField(rewrite, "apiKey", "fake-key-for-local-test");
@@ -76,9 +76,32 @@ class RewriteQuestionTest {
         JsonObject body = capturedBody.get();
         assertEquals(512, body.get("max_tokens").getAsInt());
         assertFalse(body.get("stream").getAsBoolean());
+        assertEquals("disabled", body.getAsJsonObject("thinking").get("type").getAsString());
+        assertFalse(body.has("enable_thinking"));
         JsonArray messages = body.getAsJsonArray("messages");
         assertEquals(2, messages.size());
         assertEquals(input, messages.get(1).getAsJsonObject().get("content").getAsString());
+    }
+
+    @Test
+    void extractsCompleteObjectFromFenceOrExplanation() {
+        String input = "查看申请进度";
+        String json = modelResult(input, List.of(input));
+        for (String output : List.of("```json\n" + json + "\n```", "改写结果如下：\n" + json + "\n以上为完整结果。")) {
+            modelOutput.set(output);
+            RewriteResultDTO result = rewrite.rewrite(input, List.of());
+            assertEquals(input, result.getRewrittenQuestion());
+            assertEquals(List.of(input), result.getSubQuestions());
+        }
+    }
+
+    @Test
+    void multipleObjectsStillFallBackInsteadOfTakingOneSilently() {
+        String input = "查看申请进度";
+        String json = modelResult(input, List.of(input));
+        modelOutput.set(json + "\n" + json);
+        RewriteResultDTO result = rewrite.rewrite(input, List.of());
+        assertEquals(input, result.getRewrittenQuestion());
     }
 
     @Test

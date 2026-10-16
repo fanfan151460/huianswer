@@ -37,9 +37,9 @@ public class Identify {
 
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
-    @Value("${rag.ai.siliconflow.api-key}")
+    @Value("${rag.ai.deepseek.api-key}")
     private String apiKey;
-    @Value("${rag.ai.siliconflow.chat-model}")
+    @Value("${rag.ai.deepseek.chat-model}")
     private String chatModel;
     @Value("${rag.intent.max-tokens}")
     private int maxTokens;
@@ -107,7 +107,9 @@ public class Identify {
         body.addProperty("stream", false);
         body.addProperty("max_tokens", maxTokens);
         body.addProperty("temperature", temperature);
-        body.addProperty("enable_thinking", false);
+        JsonObject thinking = new JsonObject();
+        thinking.addProperty("type", "disabled");
+        body.add("thinking", thinking);
         JsonObject responseFormat = new JsonObject();
         responseFormat.addProperty("type", "json_object");
         body.add("response_format", responseFormat);

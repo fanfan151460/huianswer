@@ -37,7 +37,7 @@ def latest_scores():
     paths = []
     for path in Path(__file__).resolve().parent.glob("*/runs/generation/*/scores/*/scores.jsonl"):
         metadata = path.parent / "scoring_run.json"
-        if metadata.exists() and read_json(metadata).get("status") == "completed":
+        if metadata.exists() and read_json(metadata).get("status") in {"completed", "completed_with_errors"}:
             paths.append(path)
     if not paths:
         raise ValueError("没有已完成的完整问答评分，请用 --scores 指定 scores.jsonl")
@@ -107,11 +107,17 @@ def render_report(rows, summary, metadata, raw_rows, source):
              f"筛选出 **{len(selected)} 题**。四项主要指标中，任意一项严格低于本轮该指标均分即入选；相等不选。", "",
              "事实 F1 仅辅助展示，不触发筛选。按主要低分项数量降序排列，同数量按题号排列，不合成总分。", "",
              "低于均分不等于答错；下文理由均来自原评委，仍需核对资料。检索精度采用原评分口径，不是相关片段数除以总片段数。", "",
-             "## 本轮均分", "", "| 指标 | 均分 | 有效题数 |", "| --- | ---: | ---: |"]
+             f"评分状态：`{metadata.get('status', '未记录')}`。评分失败的项不按零分处理，也不参与该项均分。", "",
+             "## 本轮均分", "", "| 指标 | 均分 | 有效题数 | 评分失败 | 跳过 |", "| --- | ---: | ---: | ---: | ---: |"]
     for name, label in LABELS.items():
         item = summary["metrics"].get(name, {})
         mean = item.get("mean_score")
-        lines.append(f"| {label} | {f'{mean:.4f}' if mean is not None else '—'} | {item.get('scored_cases', 0)} |")
+        lines.append(f"| {label} | {f'{mean:.4f}' if mean is not None else '—'} | {item.get('scored_cases', 0)} | {item.get('failed_cases', 0)} | {item.get('skipped_cases', 0)} |")
+    failed = [(row["case_id"], name) for row in rows
+              for name, item in row.get("metrics", {}).items() if item.get("status") == "error"]
+    if failed:
+        lines.extend(["", "## 评分失败项（不是回答判错）", ""])
+        lines.extend(f"- {case_id}：{LABELS.get(name, name)}未完成评分；需单独复查或补评。" for case_id, name in failed)
     lines.extend(["", "## 入选题目", "",
                   "| 题号 | 问题 | 低于均分的主要指标 |", "| --- | --- | --- |"])
     for row in selected:
@@ -153,7 +159,7 @@ def render_report(rows, summary, metadata, raw_rows, source):
             lines.extend(["本次没有检索到参考片段。", ""])
         lines.extend(["</details>", ""])
     manual = summary.get("manual_review_case_ids", [])
-    lines.extend(["## 未纳入本次筛选", "",
+    lines.extend(["## 其他检查项", "",
                   "- 仅辅助事实 F1 低于均分：" + ("、".join(auxiliary_only) or "无") + "。",
                   "- 原本需要人工检查的题：" + ("、".join(manual) or "无") + "。",
                   "- 原汇总记录的失败题：" + ("、".join(summary.get("failed_case_ids", [])) or "无") + "。", "",
@@ -197,6 +203,7 @@ def main():
     text, selected = render_report(rows, summary, metadata, raw_rows, source)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(text, encoding="utf-8")
+    print(f"评分文件：{source}；状态：{metadata.get('status')}")
     print(f"主要指标低于均分：{len(selected)} 题，" + "、".join(row["case_id"] for row in selected))
     print(f"报告：{output}")
     return 0

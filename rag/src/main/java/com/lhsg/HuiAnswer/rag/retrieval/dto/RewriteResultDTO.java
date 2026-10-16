@@ -14,4 +14,9 @@ public class RewriteResultDTO {
 
     /** 不拆分时只有一项，与 rewrittenQuestion 一致。 */
     private List<String> subQuestions;
+
+    /** 后端记录是否因异常退回原问题，供评测排查。 */
+    private boolean fallback;
+
+    private String errorType;
 }

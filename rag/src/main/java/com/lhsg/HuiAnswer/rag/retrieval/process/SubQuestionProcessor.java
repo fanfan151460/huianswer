@@ -74,15 +74,21 @@ public class SubQuestionProcessor {
     /** 一个任务内：先路由，再执行对应分支。 */
     private SubQuestionResultDTO processOne(String question, int index, List<KnowledgeCatalogDTO> catalog) {
         checkInterrupted();
+        long routeStart = System.nanoTime();
         IntentResultDTO route = identify.identifyOne(question, index, catalog);
+        double routeMs = (System.nanoTime() - routeStart) / 1_000_000.0;
         checkInterrupted();
+        SubQuestionResultDTO result;
         if (route.getIntent() == IntentEnum.CHAT) {
-            return processChat(question, route);
+            result = processChat(question, route);
+        } else if (route.getIntent() == IntentEnum.CLARIFY) {
+            result = processClarify(question, route);
+        } else {
+            result = processSearch(question, route);
         }
-        if (route.getIntent() == IntentEnum.CLARIFY) {
-            return processClarify(question, route);
-        }
-        return processSearch(question, route);
+        return result.setRouteMs(routeMs).setKbNames(catalog.stream()
+                .filter(kb -> route.getKbIds().contains(kb.getKbId()))
+                .map(KnowledgeCatalogDTO::getName).toList());
     }
 
     /** 普通聊天的回复由最终模型生成，这里只保留处理要求。 */
@@ -97,23 +103,29 @@ public class SubQuestionProcessor {
 
     private SubQuestionResultDTO processSearch(String question, IntentResultDTO route) {
         SubQuestionResultDTO result = result(question, route);
+        long searchStart = System.nanoTime();
         try {
             List<Long> kbIds = route.getIntent() == IntentEnum.NO_MATCH ? null : route.getKbIds();
             List<Reference> references = searchChunks.mixSearch(kbIds, question);
             checkInterrupted();
             // 只返回本子问题的 RRF 候选；全部任务结束后统一重排序。
-            return result.setReferences(references);
+            return result.setReferences(references)
+                    .setSearchStatus(references.isEmpty() ? "empty" : "success");
         } catch (CancellationException e) {
             throw e;
         } catch (Exception e) {
             log.warn("子问题 {} 检索失败，异常类型：{}", route.getIndex(), e.getClass().getSimpleName());
-            return result.setErrorMessage("该子问题的资料检索暂时失败，请稍后再试");
+            return result.setErrorMessage("该子问题的资料检索暂时失败，请稍后再试")
+                    .setSearchStatus("error").setSearchErrorType(e.getClass().getSimpleName());
+        } finally {
+            result.setSearchMs((System.nanoTime() - searchStart) / 1_000_000.0);
         }
     }
 
     private SubQuestionResultDTO result(String question, IntentResultDTO route) {
         return new SubQuestionResultDTO().setIndex(route.getIndex())
-                .setQuestion(question).setIntent(route.getIntent());
+                .setQuestion(question).setIntent(route.getIntent()).setKbIds(route.getKbIds())
+                .setRouteFallback(route.isFallback()).setRouteErrorType(route.getErrorType());
     }
 
     private void checkInterrupted() {

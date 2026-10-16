@@ -203,6 +203,8 @@ public class ChatServiceImpl implements IChatService {
         // 正文及模型统计只由工作线程维护，停止接口不跨线程入库。
         LLMChatResp resp = new LLMChatResp().setModel(chatModel).setNeedChunks(List.of());
         StringBuilder answer = new StringBuilder();
+        Map<String, Double> stageMs = new LinkedHashMap<>();
+        long preparationStart = System.nanoTime();
         try {
             emitter.send(SseEmitter.event().comment("connected"));
             task.checkStopped();
@@ -210,25 +212,30 @@ public class ChatServiceImpl implements IChatService {
             String question = req.getQuestion();
             turnNo = messageService.saveQuestion(req.getConversationId(), userId, question);
             // 读取历史以及摘要
+            long stageStart = System.nanoTime();
             SearchSummaryMemoryDTO history = summaryService.summaryMemory(req.getConversationId(), userId);
+            stageMs.put("history", elapsedMs(stageStart));
             task.checkStopped();
             // 一次完成问题改写与拆分
+            stageStart = System.nanoTime();
             RewriteResultDTO rewriteResult = rewriteQuestion.rewrite(question, history.getMemory());
+            stageMs.put("rewrite", elapsedMs(stageStart));
             task.checkStopped();
             // 所有子问题并行意图路由和检索
+            stageStart = System.nanoTime();
             List<SubQuestionResultDTO> results = subQuestionProcessor.process(rewriteResult.getSubQuestions());
+            stageMs.put("subquestions_wall", elapsedMs(stageStart));
             task.checkStopped();
             // 合并、去重多路召回的片段
             List<Reference> references = mergeReferences(results);
             task.checkStopped();
             // 使用完整改写问题进行一次全局重排序
+            stageStart = System.nanoTime();
             if (!references.isEmpty()) {
                 references = rerankChunks.rerank(rewriteResult.getRewrittenQuestion(), references);
                 task.checkStopped();
             }
-            if (enabledAssess) {
-                emitter.send(SseEmitter.event().name("evaluation").data(references, APPLICATION_JSON));
-            }
+            stageMs.put("rerank", elapsedMs(stageStart));
             // 原始输入、历史和统一资料交给模型；意图结果仅用于后端决定检索路径。
             Messages messages = new Messages().setHistory(history)
                     .setReferences(references).setQuestion(question);
@@ -237,18 +244,33 @@ public class ChatServiceImpl implements IChatService {
                     .setTemperature(isRag(results) ? 0.3 : 0.8)
                     .setModel(chatModel).setMaxTokens(answerMaxTokens);
             JsonObject body = buildRequest(chatRequest);
+            if (enabledAssess) {
+                stageMs.put("preparation", elapsedMs(preparationStart));
+                emitter.send(SseEmitter.event().name("evaluation").data(references, APPLICATION_JSON));
+                emitter.send(SseEmitter.event().name("evaluation_trace")
+                        .data(evaluationTrace(rewriteResult, results, stageMs, chatRequest), APPLICATION_JSON));
+            }
             generationManager.checkStopped(task);
             Call call = httpClient.newCall(getRequest(body));
             call.timeout().timeout(modelWait, TimeUnit.SECONDS);
             task.bindCall(call);
+            long modelStart = System.nanoTime();
             try (Response response = call.execute()) {
                 ResponseBody responseBody = response.body();
                 if (!response.isSuccessful() || responseBody == null) {
                     throw new ServiceException("模型连接失败");
                 }
                 // 解析响应
-                readStream(responseBody, resp, answer, task);
+                Double modelFirstDeltaMs = readStream(responseBody, resp, answer, task, modelStart);
                 generationManager.checkStopped(task);
+                if (enabledAssess) {
+                    Map<String, Object> stats = new LinkedHashMap<>();
+                    stats.put("answer_model", resp.getModel());
+                    stats.put("answer_temperature", chatRequest.getTemperature());
+                    stats.put("model_first_delta_ms", modelFirstDeltaMs);
+                    stats.put("model_stream_ms", elapsedMs(modelStart));
+                    emitter.send(SseEmitter.event().name("evaluation_stats").data(stats, APPLICATION_JSON));
+                }
                 resp.setNeedChunks(toSources(references));
                 // 标记结果为已完成
                 task.beginCompletion();
@@ -287,6 +309,35 @@ public class ChatServiceImpl implements IChatService {
         }
     }
 
+    private static double elapsedMs(long start) {
+        return (System.nanoTime() - start) / 1_000_000.0;
+    }
+
+    /** 仅评测开关开启时发送；候选只记录 ID，不重复推送正文。 */
+    private Map<String, Object> evaluationTrace(RewriteResultDTO rewrite,
+            List<SubQuestionResultDTO> results, Map<String, Double> stageMs, ChatRequest request) {
+        List<Map<String, Object>> routes = new ArrayList<>();
+        for (SubQuestionResultDTO result : results) {
+            Map<String, Object> route = new LinkedHashMap<>();
+            route.put("index", result.getIndex());
+            route.put("question", result.getQuestion());
+            route.put("intent", result.getIntent());
+            route.put("kb_ids", result.getKbIds());
+            route.put("kb_names", result.getKbNames());
+            route.put("fallback", result.isRouteFallback());
+            route.put("route_error_type", result.getRouteErrorType());
+            route.put("route_ms", result.getRouteMs());
+            route.put("search_status", result.getSearchStatus());
+            route.put("search_error_type", result.getSearchErrorType());
+            route.put("search_ms", result.getSearchMs());
+            route.put("candidate_chunk_ids", result.getReferences().stream().map(Reference::getChunkId).toList());
+            routes.add(route);
+        }
+        return Map.of("version", "generation-trace-v1", "rewrite", rewrite, "routes", routes,
+                "stage_ms", stageMs, "configured_model", chatModel,
+                "answer_temperature", request.getTemperature());
+    }
+
     /** 返回信息表插入所需实体 */
     private StoreDialogueDTO toStoreDTO(QuestionReq req, Long userId, int turnNo,
                                          LLMChatResp resp, String status, String errorMessage) {
@@ -300,8 +351,9 @@ public class ChatServiceImpl implements IChatService {
     /**
      * 一条 SSE 事件以空行结束；data 可以有多行，先拼完整事件再解析 JSON。
      */
-    private void readStream(ResponseBody body, LLMChatResp resp, StringBuilder answer,
-                            ChatGenerationTask task) throws IOException {
+    private Double readStream(ResponseBody body, LLMChatResp resp, StringBuilder answer,
+                            ChatGenerationTask task, long modelStart) throws IOException {
+        Double firstDeltaMs = null;
         StringBuilder eventData = new StringBuilder();
         BufferedSource source = body.source();
         while (true) {
@@ -321,6 +373,9 @@ public class ChatServiceImpl implements IChatService {
                     break;
                 }
                 readChunk(data, resp, answer, task.getEmitter());
+                if (firstDeltaMs == null && !answer.toString().isBlank()) {
+                    firstDeltaMs = elapsedMs(modelStart);
+                }
             } else if (line.startsWith("data:")) {
                 String data = line.substring(5);
                 if (data.startsWith(" ")) {
@@ -338,6 +393,7 @@ public class ChatServiceImpl implements IChatService {
         if (!"stop".equals(finishReason) && !"length".equals(finishReason)) {
             throw new ServiceException("模型回答异常终止");
         }
+        return firstDeltaMs;
     }
 
     private void readChunk(String data, LLMChatResp resp, StringBuilder answer,

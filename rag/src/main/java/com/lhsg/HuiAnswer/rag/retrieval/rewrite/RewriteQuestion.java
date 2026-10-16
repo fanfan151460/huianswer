@@ -48,7 +48,7 @@ public class RewriteQuestion {
     public RewriteResultDTO rewrite(String question, List<SearchMemoryDTO> history) {
         RewriteResultDTO fallback = new RewriteResultDTO()
                 .setRewrittenQuestion(question)
-                .setSubQuestions(List.of(question));
+                .setSubQuestions(List.of(question)).setFallback(true);
         // 第一轮也可能有多个需求，因此没有历史时仍然调用模型。
         try {Request request = getRequest(question, history);
             Call call = httpClient.newCall(request);
@@ -76,11 +76,11 @@ public class RewriteQuestion {
                 if (result.getSubQuestions().size() == 1) {
                     result.setSubQuestions(List.of(result.getRewrittenQuestion()));
                 }
-                return result;
+                return result.setFallback(false).setErrorType(null);
             }
         } catch (Exception e) {
             log.warn("问题改写与拆分失败，使用原问题，异常类型：{}", e.getClass().getSimpleName());
-            return fallback;
+            return fallback.setErrorType(e.getClass().getSimpleName());
         }
     }
 

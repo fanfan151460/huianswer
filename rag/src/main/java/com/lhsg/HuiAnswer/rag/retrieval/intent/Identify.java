@@ -73,7 +73,8 @@ public class Identify {
             log.warn("子问题 {} 模型意图路由失败，降级为 NO_MATCH，异常类型：{}",
                     index, e.getClass().getSimpleName());
             return new IntentResultDTO().setIndex(index)
-                    .setIntent(IntentEnum.NO_MATCH).setKbIds(List.of());
+                    .setIntent(IntentEnum.NO_MATCH).setKbIds(List.of())
+                    .setFallback(true).setErrorType(e.getClass().getSimpleName());
         }
     }
 

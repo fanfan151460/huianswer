@@ -14,4 +14,9 @@ public class IntentResultDTO {
     private IntentEnum intent;
 
     private List<Long> kbIds;
+
+    /** 后端记录模型调用是否失败，不混同正常 NO_MATCH。 */
+    private boolean fallback;
+
+    private String errorType;
 }

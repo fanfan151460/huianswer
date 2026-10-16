@@ -20,4 +20,15 @@ public class SubQuestionResultDTO {
 
     /** 检索失败时使用，区别于正常检索但没有命中资料。 */
     private String errorMessage;
+
+    /** 以下为本轮过程记录，不改变检索分支。 */
+    private List<Long> kbIds = List.of();
+    private List<String> kbNames = List.of();
+    private boolean routeFallback;
+    private String routeErrorType;
+    private double routeMs;
+    /** skipped / success / empty / error。 */
+    private String searchStatus = "skipped";
+    private String searchErrorType;
+    private Double searchMs;
 }

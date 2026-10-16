@@ -22,9 +22,12 @@ from openai import AsyncOpenAI
 from ragas.cache import DiskCacheBackend
 from ragas.llms import llm_factory
 from ragas.metrics.collections import Faithfulness, FactualCorrectness
+from answer_point_coverage import score_answer_points
 
 
-METRICS = ("faithfulness", "factual_correctness")
+METRICS = ("faithfulness", "answer_point_coverage", "factual_correctness")
+PROTOCOL_VERSION = "generation-v2"
+DEFAULT_REFERENCES = Path(__file__).resolve().parent / "xinglan-shop-v1" / "cases" / "generation_reference_v2.json"
 
 
 def latest_results():
@@ -35,18 +38,49 @@ def latest_results():
     return paths[-1]
 
 
-def load_rows(path, limit):
+def load_rows(path, limit, references=None, case_ids=None):
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     if not rows or len({row["case_id"] for row in rows}) != len(rows):
         raise ValueError("采集结果为空或有重复题号")
+    if case_ids:
+        wanted = set(case_ids)
+        missing = wanted - {row["case_id"] for row in rows}
+        if missing:
+            raise ValueError("采集文件不存在这些题号：" + ", ".join(sorted(missing)))
+        rows = [row for row in rows if row["case_id"] in wanted]
     rows = rows[:limit] if limit else rows
+    profile_path = (references or DEFAULT_REFERENCES).resolve()
+    profile_bytes = profile_path.read_bytes()
+    profile = json.loads(profile_bytes.decode("utf-8-sig"))
+    entries = profile["cases"]
+    if not profile.get("version") or len({entry["id"] for entry in entries}) != len(entries):
+        raise ValueError("参考答案修订版缺少版本号或存在重复题号")
+    catalog = {entry["id"]: entry for entry in entries}
+    checksum = hashlib.sha256(profile_bytes).hexdigest()
     for row in rows:
         if row.get("input_mode") != "end_to_end_chat":
             raise ValueError("请使用生成采集结果，不能使用旧的独立检索结果")
         if not row.get("user_input") or not row.get("reference"):
-            raise ValueError("采集记录缺少问题或参考答案")
+            raise ValueError("采集记录缺少问题或原始参考答案")
         if not isinstance(row.get("retrieved_contexts"), list):
             raise ValueError("采集记录缺少 retrieved_contexts 数组")
+        revised = catalog.get(row["case_id"])
+        if revised is None or revised["question"] != row["user_input"]:
+            raise ValueError(f"{row['case_id']} 的题号或问题与修订版不一致")
+        if revised["generation_scorable"] != row.get("generation_scorable"):
+            raise ValueError(f"{row['case_id']} 的题型评分范围与修订版不一致")
+        points = revised.get("expected_answer_points")
+        if not revised.get("reference_answer") or not isinstance(points, list) or not points or any(
+                not isinstance(point, str) or not point.strip() for point in points):
+            raise ValueError(f"{row['case_id']} 的修订版参考答案或要点不完整")
+        # 只更新本次评分内存中的标准；原始 results.jsonl 保持原值。
+        row["collected_reference"] = row["reference"]
+        row["collected_expected_answer_points"] = row.get("expected_answer_points", [])
+        row["reference"] = revised["reference_answer"]
+        row["expected_answer_points"] = points
+        row["reference_revision"] = profile["version"]
+        row["reference_profile_sha256"] = checksum
+        row["evidence_sections"] = revised.get("evidence_sections", [])
     return rows
 
 
@@ -64,7 +98,8 @@ async def score_one(row, metrics, judge, api_key):
     out = {key: row.get(key) for key in (
         "case_id", "category", "user_input", "reference", "response", "retrieved_contexts",
         "warmup_history", "conversation_id", "generation_id", "http_elapsed_ms",
-        "expected_answer_points", "forbidden_claims",
+        "expected_answer_points", "forbidden_claims", "collected_reference",
+        "collected_expected_answer_points", "reference_revision", "reference_profile_sha256", "evidence_sections",
     )}
     out["chunk_ids"] = [chunk.get("chunkId") for chunk in row.get("chunks", [])]
     out["metrics"] = {}
@@ -76,14 +111,17 @@ async def score_one(row, metrics, judge, api_key):
         return out
     contexts = faithfulness_contexts(row)
     out["faithfulness_contexts"] = contexts
-    for name, metric in metrics.items():
+    for name in METRICS:
         judge.decisions.clear()
         result = {"status": "error", "score": None, "decisions": [], "error": None}
         start = time.perf_counter()
         try:
             if name == "faithfulness" and not contexts:
                 result.update(status="skipped", error="没有检索资料或已有历史，忠实度不适用；事实正确性仍单独评分")
+            elif name == "answer_point_coverage":
+                result.update(status="success", **(await score_answer_points(row, judge)))
             else:
+                metric = metrics[name]
                 if name == "faithfulness":
                     scored = await metric.ascore(user_input=row["user_input"], response=row["response"],
                                                  retrieved_contexts=contexts)
@@ -115,12 +153,55 @@ def summarize(rows):
         values = [row["metrics"][name] for row in rows if name in row["metrics"]]
         successful = [item["score"] for item in values if item["status"] == "success"]
         result["metrics"][name] = {
+            "role": "auxiliary" if name == "factual_correctness" else "primary",
             "mean_score": statistics.mean(successful) if successful else None,
             "scored_cases": len(successful),
             "failed_cases": sum(item["status"] == "error" for item in values),
             "skipped_cases": sum(item["status"] == "skipped" for item in values),
         }
     return result
+
+
+def write_report(directory, rows, metadata):
+    """易读报告只整理已有回答与判定，不追加模型请求。"""
+    lines = ["# 生成评测报告", "",
+             f"评分口径：{metadata['protocol_version']}；参考答案：{metadata['reference_revision']}。", "",
+             "主要查看要点覆盖率和忠实度；事实F1辅助诊断，各项不合成为总分。",
+             "参考答案修订前后的分数不能直接当作系统优化收益。", ""]
+    for row in rows:
+        lines.extend([f"## {row['case_id']} · {row['status']}", "",
+                      "**问题**", "", row.get("user_input") or "", "",
+                      "**实际回答**", "", row.get("response") or "", "",
+                      "**本次参考答案**", "", row.get("reference") or "", ""])
+        if row["status"] == "manual_review":
+            lines.extend(["**人工检查要点**", ""])
+            lines.extend("- " + point for point in row.get("expected_answer_points") or [])
+            lines.extend(["", "**禁止给出的错误结论**", ""])
+            lines.extend("- " + claim for claim in row.get("forbidden_claims") or [])
+            lines.append("")
+            continue
+        for name, item in row["metrics"].items():
+            lines.extend([f"### {name}", "",
+                          f"分数：{item['score']}；状态：{item['status']}。", ""])
+            if item.get("error"):
+                lines.extend([str(item["error"]), ""])
+            if name == "answer_point_coverage" and item["status"] == "success":
+                lines.extend([f"覆盖 {item['covered_points']} / {item['total_points']} 个必要要点。", ""])
+                for verdict in item["judgments"]:
+                    label = "已覆盖" if verdict["verdict"] else "未覆盖"
+                    lines.extend([f"- **{verdict['index']}. {label}**：{verdict['point']}",
+                                  f"  判定理由：{verdict['reason']}"])
+                lines.append("")
+            elif name == "faithfulness":
+                for decision in item.get("decisions", []):
+                    for statement in decision.get("result", {}).get("statements", []):
+                        if isinstance(statement, dict) and statement.get("verdict") == 0:
+                            lines.extend(["- **缺少资料支持的陈述：** " + statement["statement"],
+                                          "  判定理由：" + statement.get("reason", "")])
+                lines.append("")
+        if row.get("error"):
+            lines.extend([str(row["error"]), ""])
+    (directory / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 async def run_scoring(args, rows, source, api_key):
@@ -135,6 +216,14 @@ async def run_scoring(args, rows, source, api_key):
     metadata = {
         "source": str(source), "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "input_mode": "end_to_end_chat", "judge_model": args.model, "judge_base_url": args.base_url,
+        "protocol_version": PROTOCOL_VERSION,
+        "reference_profile": str(args.references),
+        "reference_revision": rows[0]["reference_revision"],
+        "reference_profile_sha256": rows[0]["reference_profile_sha256"],
+        "selected_case_ids": [row["case_id"] for row in rows],
+        "metric_roles": {"primary": ["faithfulness", "answer_point_coverage"],
+                         "auxiliary": ["factual_correctness"]},
+        "answer_point_coverage": "sum(covered_verdicts) / number_of_required_points",
         "temperature": 0, "max_tokens": 4096, "metrics": list(METRICS),
         "factual_correctness": {"mode": "f1", "atomicity": "high", "coverage": "high"},
         "faithfulness_context_mode": "actual_retrieved_chunks_and_actual_warmup_history",
@@ -179,10 +268,15 @@ async def run_scoring(args, rows, source, api_key):
         raise
     finally:
         summary = summarize(scored_rows)
+        summary["protocol_version"] = metadata["protocol_version"]
+        summary["reference_revision"] = metadata["reference_revision"]
+        summary["reference_profile_sha256"] = metadata["reference_profile_sha256"]
         write_json(directory / "summary.json", summary)
+        write_report(directory, scored_rows, metadata)
         write_json(directory / "scoring_run.json", metadata)
         cache.cache.close()
-        lines = ["Ragas生成评分摘要（本轮不是三种检索策略对比）"]
+        lines = [f"生成评分摘要：{PROTOCOL_VERSION} / {metadata['reference_revision']}",
+                 "主要指标：要点覆盖率、忠实度；事实F1为辅助；不合成为总分。"]
         for name, item in summary["metrics"].items():
             lines.append(f"{name}: 均分={item['mean_score']}, 有效题={item['scored_cases']}, "
                          f"评分失败={item['failed_cases']}, 不适用={item['skipped_cases']}")
@@ -197,6 +291,9 @@ def main():
     parser = argparse.ArgumentParser(description="用 Ragas 给已有完整问答评分，不调用问答接口")
     parser.add_argument("--results", type=Path, help="生成采集的 results.jsonl，默认取最新一次")
     parser.add_argument("--limit", type=int, default=0, help="只处理前几道题，0为本采集文件全部题")
+    parser.add_argument("--case-ids", nargs="+", help="只评分指定题号，例如 XL-003 XL-008")
+    parser.add_argument("--references", type=Path, default=DEFAULT_REFERENCES,
+                        help="生成评测参考答案修订版，默认 generation_reference_v2.json")
     parser.add_argument("--model", default=os.getenv("HUIANSWER_EVAL_MODEL") or
                         os.getenv("HUIANSWER_CHAT_MODEL", "deepseek-ai/DeepSeek-V4-Flash"))
     parser.add_argument("--base-url", default=os.getenv("HUIANSWER_EVAL_BASE_URL") or
@@ -210,9 +307,11 @@ def main():
     if not args.base_url.endswith("/v1"):
         args.base_url += "/v1"
     source = (args.results or latest_results()).resolve()
-    rows = load_rows(source, args.limit)
-    count = sum(row["status"] == "success" and row.get("generation_scorable") for row in rows)
+    args.references = args.references.resolve()
+    rows = load_rows(source, args.limit, args.references, args.case_ids)
+    count = sum(row["status"] == "success" and row.get("generation_scorable") is True for row in rows)
     print(f"采集文件：{source}\n将处理 {len(rows)} 条记录，其中 {count} 道知识问答可评分。")
+    print(f"参考答案版本：{rows[0]['reference_revision']}；评分口径：{PROTOCOL_VERSION}")
     source_run = source.parent / "run.json"
     if source_run.exists():
         status = json.loads(source_run.read_text(encoding="utf-8"))["status"]

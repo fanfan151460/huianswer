@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: huianswer-postgres
+    env_file:
+      - /etc/huianswer/postgres.env
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - /opt/huianswer/data/postgres:/var/lib/postgresql/data
+    shm_size: 128m
+    mem_limit: 384m
+    memswap_limit: 512m
+    cpus: 0.5
+    pids_limit: 128
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=20
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - max_wal_size=256MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U huianswer -d huianswer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped

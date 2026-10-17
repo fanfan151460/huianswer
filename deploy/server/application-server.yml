@@ -1,0 +1,46 @@
+server:
+  address: 127.0.0.1
+  port: ${HUIANSWER_PORT:8084}
+  tomcat:
+    threads:
+      max: 20
+      min-spare: 2
+    max-connections: 50
+    accept-count: 10
+spring:
+  servlet:
+    multipart:
+      location: /opt/huianswer/data/tmp
+  datasource:
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 1
+  data:
+    redis:
+      database: 1
+rag:
+  evaluation:
+    enabled: false
+  storage:
+    local-root: /opt/huianswer/data/documents
+  executor:
+    chat:
+      core-size: 2
+      max-size: 4
+      queue-capacity: 8
+    sub-question:
+      core-size: 4
+      max-size: 8
+      queue-capacity: 16
+    summary:
+      core-size: 1
+      max-size: 1
+      queue-capacity: 8
+logging:
+  file:
+    name: /opt/huianswer/logs/application.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 3
+      total-size-cap: 100MB

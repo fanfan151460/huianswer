@@ -1,0 +1,28 @@
+[Unit]
+Description=HuiAnswer RAG application
+After=network-online.target docker.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=huianswer
+Group=huianswer
+WorkingDirectory=/opt/huianswer
+EnvironmentFile=/etc/huianswer/app.env
+ExecStart=/usr/bin/java -Xms96m -Xmx384m -Xss512k -XX:MaxMetaspaceSize=160m -XX:MaxDirectMemorySize=64m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -Duser.timezone=Asia/Shanghai -Djava.io.tmpdir=/opt/huianswer/data/tmp -Drocketmq.client.logRoot=/opt/huianswer/logs/rocketmq -jar /opt/huianswer/app/huianswer.jar --spring.profiles.active=server --spring.config.additional-location=file:/etc/huianswer/
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=45
+SuccessExitStatus=143
+MemoryHigh=640M
+MemoryMax=768M
+TasksMax=160
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

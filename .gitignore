@@ -10,3 +10,6 @@ application-local.properties
 *.ps1
 *.md
 !docs/document-management.md
+!deploy/server/README.md
+!frontend/README.md
+!frontend/DESIGN.md

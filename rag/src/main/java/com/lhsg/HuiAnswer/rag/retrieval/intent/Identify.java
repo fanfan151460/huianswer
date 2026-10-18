@@ -67,7 +67,12 @@ public class Identify {
                 throw new IllegalStateException("意图路由未完整结束");
             }
             String content = choice.getAsJsonObject("message").get("content").getAsString();
-            IntentRespDTO result = gson.fromJson(content, IntentRespDTO.class);
+            int start = content.indexOf('{');
+            int end = content.lastIndexOf('}');
+            if (start < 0 || end < start) {
+                throw new IllegalStateException("改写模型未返回完整 JSON 对象");
+            }
+            IntentRespDTO result = gson.fromJson(content.substring(start, end + 1), IntentRespDTO.class);
             return validateResult(result, index, allowedIds);
         } catch (Exception e) {
             log.warn("子问题 {} 模型意图路由失败，降级为 NO_MATCH，异常类型：{}",
@@ -111,9 +116,9 @@ public class Identify {
         JsonObject thinking = new JsonObject();
         thinking.addProperty("type", "disabled");
         body.add("thinking", thinking);
-        JsonObject responseFormat = new JsonObject();
-        responseFormat.addProperty("type", "json_object");
-        body.add("response_format", responseFormat);
+//        JsonObject responseFormat = new JsonObject();
+//        responseFormat.addProperty("type", "json_object");
+//        body.add("response_format", responseFormat);
         return new Request.Builder().url(apiUrl.chatCompletionsUrl())
                 .header("Authorization", "Bearer " + apiKey)
                 .post(RequestBody.create(body.toString(), JSON)).build();

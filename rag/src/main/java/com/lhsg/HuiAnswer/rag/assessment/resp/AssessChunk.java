@@ -1,4 +1,4 @@
-package com.lhsg.HuiAnswer.rag.assessment.chunkSearch.resp;
+package com.lhsg.HuiAnswer.rag.assessment.resp;
 
 import lombok.Data;
 import lombok.experimental.Accessors;

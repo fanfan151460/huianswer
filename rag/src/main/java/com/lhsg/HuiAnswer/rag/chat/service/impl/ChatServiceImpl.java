@@ -90,6 +90,9 @@ public class ChatServiceImpl implements IChatService {
     private int answerMaxTokens;
     @Value("${rag.evaluation.enabled:false}")
     private boolean enabledAssess;
+    /** B 组开关：只执行完整改写问题；关闭后恢复 C 组的子问题并行流程。 */
+    @Value("${rag.evaluation.single-question:false}")
+    private boolean singleQuestionAssess;
 
     @Override
     public void chat(QuestionReq req, SseEmitter emitter) {
@@ -216,17 +219,19 @@ public class ChatServiceImpl implements IChatService {
             SearchSummaryMemoryDTO history = summaryService.summaryMemory(req.getConversationId(), userId);
             stageMs.put("history", elapsedMs(stageStart));
             task.checkStopped();
-            // 一次完成问题改写与拆分
+            boolean singleQuestion = enabledAssess && singleQuestionAssess;
+            // 一次完成问题改写与拆分；B 组只使用完整改写，不分别执行子问题。
             stageStart = System.nanoTime();
             RewriteResultDTO rewriteResult = rewriteQuestion.rewrite(question, history.getMemory());
             stageMs.put("rewrite", elapsedMs(stageStart));
             task.checkStopped();
-            // 所有子问题并行意图路由和检索
+            List<String> searchQuestions = singleQuestion
+                    ? List.of(rewriteResult.getRewrittenQuestion()) : rewriteResult.getSubQuestions();
+            // 复用现有任务：每个问题先路由，再检索；B 组只提交一个完整问题。
             stageStart = System.nanoTime();
-            List<SubQuestionResultDTO> results = subQuestionProcessor.process(rewriteResult.getSubQuestions());
+            List<SubQuestionResultDTO> results = subQuestionProcessor.process(searchQuestions);
             stageMs.put("subquestions_wall", elapsedMs(stageStart));
             task.checkStopped();
-            // 合并、去重多路召回的片段
             List<Reference> references = mergeReferences(results);
             task.checkStopped();
             // 使用完整改写问题进行一次全局重排序
@@ -239,16 +244,17 @@ public class ChatServiceImpl implements IChatService {
             // 原始输入、历史和统一资料交给模型；意图结果仅用于后端决定检索路径。
             Messages messages = new Messages().setHistory(history)
                     .setReferences(references).setQuestion(question);
+            boolean ragQuestion = isRag(results);
             ChatRequest chatRequest = new ChatRequest().setMessages(messages)
-                    .setThinking(isRag(results))
-                    .setTemperature(isRag(results) ? 0.3 : 0.8)
+                    .setThinking(ragQuestion)
+                    .setTemperature(ragQuestion ? 0.3 : 0.8)
                     .setModel(chatModel).setMaxTokens(answerMaxTokens);
             JsonObject body = buildRequest(chatRequest);
             if (enabledAssess) {
                 stageMs.put("preparation", elapsedMs(preparationStart));
                 emitter.send(SseEmitter.event().name("evaluation").data(references, APPLICATION_JSON));
                 emitter.send(SseEmitter.event().name("evaluation_trace")
-                        .data(evaluationTrace(rewriteResult, results, stageMs, chatRequest), APPLICATION_JSON));
+                        .data(evaluationTrace(rewriteResult, results, stageMs, chatRequest, singleQuestion), APPLICATION_JSON));
             }
             generationManager.checkStopped(task);
             Call call = httpClient.newCall(getRequest(body));
@@ -320,13 +326,15 @@ public class ChatServiceImpl implements IChatService {
 
     /** 仅评测开关开启时发送；候选只记录 ID，不重复推送正文。 */
     private Map<String, Object> evaluationTrace(RewriteResultDTO rewrite,
-            List<SubQuestionResultDTO> results, Map<String, Double> stageMs, ChatRequest request) {
+            List<SubQuestionResultDTO> results, Map<String, Double> stageMs, ChatRequest request,
+            boolean singleQuestion) {
         List<Map<String, Object>> routes = new ArrayList<>();
         for (SubQuestionResultDTO result : results) {
             Map<String, Object> route = new LinkedHashMap<>();
             route.put("index", result.getIndex());
             route.put("question", result.getQuestion());
             route.put("intent", result.getIntent());
+            route.put("route_status", "executed");
             route.put("kb_ids", result.getKbIds());
             route.put("kb_names", result.getKbNames());
             route.put("fallback", result.isRouteFallback());
@@ -340,7 +348,11 @@ public class ChatServiceImpl implements IChatService {
         }
         return Map.of("version", "generation-trace-v1", "rewrite", rewrite, "routes", routes,
                 "stage_ms", stageMs, "configured_model", chatModel,
-                "answer_temperature", request.getTemperature());
+                "answer_temperature", request.getTemperature(),
+                "evaluation_mode", singleQuestion ? "B" : "C",
+                "description", singleQuestion ? "完整问题改写后执行一次意图路由和检索，不按子问题分别检索"
+                        : "问题改写拆分后，各子问题独立路由检索，合并后统一重排序",
+                "rewrite_enabled", true, "intent_routing_enabled", true);
     }
 
     /** 返回信息表插入所需实体 */

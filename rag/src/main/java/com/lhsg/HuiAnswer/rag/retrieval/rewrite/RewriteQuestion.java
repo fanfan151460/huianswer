@@ -44,44 +44,119 @@ public class RewriteQuestion {
     private int timeoutSeconds;
     @Value("${rag.evaluation.enabled:false}")
     private boolean enabledAssess;
+    @Value("${rag.rewrite.backup-model:}")
+    private String backupModel;
+    // 复用向量化、重排序使用的硅基流动密钥。
+    @Value("${rag.ai.siliconflow.api-key}")
+    private String backupApiKey;
+    @Value("${rag.rewrite.backup-timeout-seconds:5}")
+    private int backupTimeoutSeconds;
 
-    /** 一次完成改写和拆分；失败时将原文作为唯一子问题。 */
+    /** 主模型一次、备用模型一次；都失败才退回原问题。 */
     @TimeAnnotation(method = "问题改写与拆分")
     public RewriteResultDTO rewrite(String question, List<SearchMemoryDTO> history) {
         RewriteResultDTO fallback = new RewriteResultDTO()
                 .setRewrittenQuestion(question)
-                .setSubQuestions(List.of(question)).setFallback(true);
-        // 第一轮也可能有多个需求，因此没有历史时仍然调用模型。
-        String modelContent = null;
+                .setSubQuestions(List.of(question)).setFallback(true).setModel(chatModel);
         try {
-            Request request = getRequest(question, history);
+            return rewriteOnce(question, history, false);
+        } catch (Exception primaryFailure) {
+            fallback.setErrorType(primaryFailure.getClass().getSimpleName())
+                    .setPrimaryErrorType(primaryFailure.getClass().getSimpleName())
+                    .setPrimaryErrorMessage(primaryFailure.getMessage());
+            if (StrUtil.isBlank(backupModel) || StrUtil.isBlank(backupApiKey)
+                    || Thread.currentThread().isInterrupted()) {
+                return fallback;
+            }
+            log.warn("改写主模型失败，切换备用模型 {}", backupModel);
+            try {
+                // 备用成功也是正常改写；fallback 只表示最终退回原问题。
+                return rewriteOnce(question, history, true)
+                        .setPrimaryErrorType(primaryFailure.getClass().getSimpleName())
+                        .setPrimaryErrorMessage(primaryFailure.getMessage());
+            } catch (Exception backupFailure) {
+                log.warn("问题改写与拆分主备模型均失败，使用原问题，异常类型：{}",
+                        backupFailure.getClass().getSimpleName());
+                return fallback.setBackupUsed(true).setModel(backupModel)
+                        .setErrorType(backupFailure.getClass().getSimpleName());
+            }
+        }
+    }
+
+    /** 两个模型共用消息、JSON 协议和校验，只切换模型、鉴权及各平台的请求参数。 */
+    private RewriteResultDTO rewriteOnce(String question, List<SearchMemoryDTO> history,
+                                         boolean useBackup) throws IOException {
+        String model = useBackup ? backupModel : chatModel;
+        String modelContent = null;
+        String finishReason = null;
+        String host = null;
+        JsonObject modelResponse = null;
+        Integer reasoningLength = null;
+        int timeout = useBackup ? backupTimeoutSeconds : timeoutSeconds;
+        long start = System.nanoTime();
+        try {
+            // 模型名只选择一次，同时传给请求体和日志，避免显示与实际调用错位。
+            Request request = getRequest(question, history, useBackup, model);
+            host = request.url().host();
+            if (enabledAssess) {
+                log.info("开始改写调用，model={}，host={}，backup={}，timeoutSeconds={}",
+                        model, host, useBackup, timeout);
+            }
             Call call = httpClient.newCall(request);
-            call.timeout().timeout(timeoutSeconds, TimeUnit.SECONDS);
+            call.timeout().timeout(timeout, TimeUnit.SECONDS);
             try (Response response = call.execute()) {
                 ResponseBody responseBody = response.body();
                 if (!response.isSuccessful() || responseBody == null) {
-                    throw new IOException("问题改写接口返回 HTTP " + response.code());
+                    // 错误体常含模型名、鉴权或余额信息；不读出来就只剩一个 HTTP 码。
+                    String errorBody = "";
+                    if (responseBody != null) {
+                        try {
+                            errorBody = responseBody.string();
+                        } catch (IOException readFailure) {
+                            errorBody = "<读取响应体失败：" + readFailure.getMessage() + ">";
+                        }
+                    }
+                    throw new IOException("问题改写接口返回 HTTP " + response.code()
+                            + "，响应体：" + StrUtil.maxLength(errorBody, 1000));
                 }
-                JsonObject json = gson.fromJson(responseBody.string(), JsonObject.class);
-                JsonObject choice = json.getAsJsonArray("choices").get(0).getAsJsonObject();
+                modelResponse = gson.fromJson(responseBody.string(), JsonObject.class);
+                JsonObject choice = modelResponse.getAsJsonArray("choices").get(0).getAsJsonObject();
+                finishReason = choice.get("finish_reason").getAsString();
+                JsonObject message = choice.getAsJsonObject("message");
+                modelContent = message.get("content").getAsString();
+                if (message.has("reasoning_content") && !message.get("reasoning_content").isJsonNull()) {
+                    reasoningLength = message.get("reasoning_content").getAsString().length();
+                }
                 // 截断的改写可能丢掉问题条件，不能拿去检索。
-                if (!"stop".equals(choice.get("finish_reason").getAsString())) {
-                    throw new IllegalStateException("问题改写未完整结束");
+                if (!"stop".equals(finishReason)) {
+                    throw new IllegalStateException("问题改写未完整结束：" + finishReason);
                 }
-                modelContent = choice.getAsJsonObject("message").get("content").getAsString();
-                return parseResult(modelContent).setFallback(false).setErrorType(null);
+                RewriteResultDTO result = parseResult(modelContent).setFallback(false).setErrorType(null)
+                        .setModel(model).setBackupUsed(useBackup)
+                        .setPrimaryErrorType(null).setPrimaryErrorMessage(null);
+                if (enabledAssess) {
+                    log.info("改写调用成功，model={}，host={}，responseModel={}，backup={}，elapsedMs={}，usage={}",
+                            model, host, modelResponse.get("model"), useBackup,
+                            (System.nanoTime() - start) / 1_000_000, modelResponse.get("usage"));
+                }
+                return result;
             }
         } catch (Exception e) {
             if (enabledAssess) {
-                // 仅本地评测开启时记录失败正文，便于区分围栏、缺字段和损坏的 JSON。
-                String preview = modelContent == null ? "未读取到正文"
+                String preview = modelContent == null ? null
                         : modelContent.substring(0, Math.min(modelContent.length(), 2000));
-                log.warn("问题改写与拆分失败，使用原问题，异常类型：{}，原因：{}，模型正文：{}",
-                        e.getClass().getSimpleName(), e.getMessage(), preview);
+                // JSON 转义后可以看清纯空白输出；只在评测时打印模型正文。
+                log.warn("改写模型调用失败，model={}，host={}，responseModel={}，backup={}，elapsedMs={}，异常类型：{}，原因：{}，finishReason={}，contentLength={}，reasoningLength={}，usage={}，模型正文：{}",
+                        model, host, modelResponse == null ? null : modelResponse.get("model"), useBackup,
+                        (System.nanoTime() - start) / 1_000_000,
+                        e.getClass().getSimpleName(), e.getMessage(), finishReason,
+                        modelContent == null ? null : modelContent.length(), reasoningLength,
+                        modelResponse == null ? null : modelResponse.get("usage"), gson.toJson(preview));
             } else {
-                log.warn("问题改写与拆分失败，使用原问题，异常类型：{}", e.getClass().getSimpleName());
+                log.warn("改写模型调用失败，model={}，异常类型：{}，原因：{}",
+                        model, e.getClass().getSimpleName(), e.getMessage());
             }
-            return fallback.setErrorType(e.getClass().getSimpleName());
+            throw e;
         }
     }
 
@@ -110,7 +185,7 @@ public class RewriteQuestion {
         return result;
     }
 
-    private Request getRequest(String question, List<SearchMemoryDTO> history) {
+    private Request getRequest(String question, List<SearchMemoryDTO> history, boolean useBackup, String model) {
         JsonArray messages = new JsonArray();
         JsonObject system = new JsonObject();
         system.addProperty("role", "system");
@@ -132,20 +207,24 @@ public class RewriteQuestion {
         messages.add(current);
 
         JsonObject body = new JsonObject();
-        body.addProperty("model", chatModel);
+        body.addProperty("model", model);
         body.add("messages", messages);
         body.addProperty("stream", false);
         body.addProperty("max_tokens", maxTokens);
         body.addProperty("temperature", temperature);
-        JsonObject thinking = new JsonObject();
-        thinking.addProperty("type", "disabled");
-        body.add("thinking", thinking);
-        JsonObject responseFormat = new JsonObject();
-        responseFormat.addProperty("type", "json_object");
-        body.add("response_format", responseFormat);
+        if (useBackup) {
+            body.addProperty("enable_thinking", false);
+        } else {
+            JsonObject thinking = new JsonObject();
+            thinking.addProperty("type", "disabled");
+            body.add("thinking", thinking);
+        }
+        // JSON 格式由提示词和示例约束；兼容模型可能附带的说明或代码围栏。
+        // 此处不启用强制 JSON 模式，避免当前多轮改写输入反复返回纯空白。
         return new Request.Builder()
-                .url(apiUrl.chatCompletionsUrl())
-                .header("Authorization", "Bearer " + apiKey)
+                .url(useBackup ? apiUrl.getUrl().replaceAll("/+$", "") + "/v1/chat/completions"
+                        : apiUrl.chatCompletionsUrl())
+                .header("Authorization", "Bearer " + (useBackup ? backupApiKey : apiKey))
                 .post(RequestBody.create(body.toString(), JSON))
                 .build();
     }

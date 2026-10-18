@@ -2,9 +2,9 @@ package com.lhsg.HuiAnswer.rag.assessment.chunkSearch;
 
 import cn.hutool.core.bean.BeanUtil;
 import com.lhsg.HuiAnswer.framework.exception.ClientException;
-import com.lhsg.HuiAnswer.rag.assessment.chunkSearch.req.ChunkAssessReq;
-import com.lhsg.HuiAnswer.rag.assessment.chunkSearch.resp.AssessChunk;
-import com.lhsg.HuiAnswer.rag.assessment.chunkSearch.resp.AssessChunkResp;
+import com.lhsg.HuiAnswer.rag.assessment.req.ChunkAssessReq;
+import com.lhsg.HuiAnswer.rag.assessment.resp.AssessChunk;
+import com.lhsg.HuiAnswer.rag.assessment.resp.AssessChunkResp;
 import com.lhsg.HuiAnswer.rag.retrieval.rerank.RerankChunks;
 import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
 import lombok.RequiredArgsConstructor;

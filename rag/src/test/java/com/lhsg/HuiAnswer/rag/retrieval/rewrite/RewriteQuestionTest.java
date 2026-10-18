@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -21,11 +22,15 @@ import static org.junit.jupiter.api.Assertions.*;
 class RewriteQuestionTest {
     private final Gson gson = new Gson();
     private final AtomicReference<String> modelOutput = new AtomicReference<>();
+    private final AtomicReference<String> backupOutput = new AtomicReference<>();
+    private final List<Request> capturedRequests = new ArrayList<>();
+    private final List<JsonObject> capturedBodies = new ArrayList<>();
     private final AtomicReference<String> finishReason = new AtomicReference<>("stop");
     private final AtomicReference<JsonObject> capturedBody = new AtomicReference<>();
     private final AtomicInteger requestCount = new AtomicInteger();
     private final AtomicInteger responseStatus = new AtomicInteger(200);
     private RewriteQuestion rewrite;
+    private boolean blankWhenJsonMode;
 
     @BeforeEach
     void setUp() {
@@ -35,31 +40,46 @@ class RewriteQuestionTest {
             Buffer buffer = new Buffer();
             chain.request().body().writeTo(buffer);
             capturedBody.set(gson.fromJson(buffer.readUtf8(), JsonObject.class));
+            capturedRequests.add(chain.request());
+            capturedBodies.add(capturedBody.get());
+            boolean backup = "backup.test".equals(chain.request().url().host());
 
             JsonObject message = new JsonObject();
-            message.addProperty("content", modelOutput.get());
+            String content = backup ? backupOutput.get() : modelOutput.get();
+            // 模拟本次对照现象：启用强制 JSON 时只返回空白。
+            message.addProperty("content", blankWhenJsonMode && capturedBody.get().has("response_format")
+                    ? "   " : content);
             JsonObject choice = new JsonObject();
-            choice.addProperty("finish_reason", finishReason.get());
+            choice.addProperty("finish_reason", backup ? "stop" : finishReason.get());
             choice.add("message", message);
             JsonArray choices = new JsonArray();
             choices.add(choice);
             JsonObject body = new JsonObject();
             body.add("choices", choices);
+            body.addProperty("model", capturedBody.get().get("model").getAsString());
+            // 有 completion token 不代表正文可用；空白响应照样必须触发备用。
+            JsonObject usage = new JsonObject();
+            usage.addProperty("completion_tokens", 72);
+            body.add("usage", usage);
             return new Response.Builder()
                     .request(chain.request()).protocol(Protocol.HTTP_1_1)
-                    .code(responseStatus.get()).message("test-response")
+                    .code(backup ? 200 : responseStatus.get()).message("test-response")
                     .body(ResponseBody.create(body.toString(), MediaType.get("application/json")))
                     .build();
         }).build();
         ApiUrl apiUrl = new ApiUrl();
         apiUrl.setChatUrl("http://rewrite.test");
         apiUrl.setChatPath("/v1/chat/completions");
+        apiUrl.setUrl("http://backup.test/");
         rewrite = new RewriteQuestion(client, gson, apiUrl);
         ReflectionTestUtils.setField(rewrite, "apiKey", "fake-key-for-local-test");
         ReflectionTestUtils.setField(rewrite, "chatModel", "test-model");
         ReflectionTestUtils.setField(rewrite, "maxTokens", 512);
         ReflectionTestUtils.setField(rewrite, "temperature", 0.1);
         ReflectionTestUtils.setField(rewrite, "timeoutSeconds", 10);
+        ReflectionTestUtils.setField(rewrite, "backupModel", "");
+        ReflectionTestUtils.setField(rewrite, "backupApiKey", "fake-backup-key");
+        ReflectionTestUtils.setField(rewrite, "backupTimeoutSeconds", 5);
     }
 
     @Test
@@ -81,6 +101,22 @@ class RewriteQuestionTest {
         JsonArray messages = body.getAsJsonArray("messages");
         assertEquals(2, messages.size());
         assertEquals(input, messages.get(1).getAsJsonObject().get("content").getAsString());
+    }
+
+    @Test
+    void plainOutputWithJsonExampleAndFenceDoesNotTriggerBlankJsonMode() {
+        String input = "SL-A100基础版屏幕显示E07提示时，应该先检查哪里？";
+        blankWhenJsonMode = true;
+        modelOutput.set("改写结果：\n```json\n" + modelResult(input, List.of(input)) + "\n```");
+
+        RewriteResultDTO result = rewrite.rewrite(input, List.of());
+
+        assertFalse(result.isFallback());
+        assertFalse(result.isBackupUsed());
+        assertEquals(input, result.getRewrittenQuestion());
+        assertEquals(List.of(input), result.getSubQuestions());
+        assertEquals(1, requestCount.get());
+        assertFalse(capturedBody.get().has("response_format"));
     }
 
     @Test
@@ -205,6 +241,114 @@ class RewriteQuestionTest {
 
         assertEquals(input, result.getRewrittenQuestion());
         assertEquals(List.of(input), result.getSubQuestions());
+    }
+
+    @Test
+    void successfulPrimaryDoesNotCallEnabledBackup() {
+        enableBackup();
+        String input = "你好";
+        modelOutput.set(modelResult(input, List.of(input)));
+
+        RewriteResultDTO result = rewrite.rewrite(input, List.of());
+
+        assertEquals(1, requestCount.get());
+        assertFalse(result.isFallback());
+        assertFalse(result.isBackupUsed());
+        assertEquals("test-model", result.getModel());
+        assertEquals(capturedBody.get().get("model").getAsString(), result.getModel());
+        assertEquals("rewrite.test", capturedRequests.get(0).url().host());
+        assertNull(result.getPrimaryErrorType());
+    }
+
+    @Test
+    void invalidPrimaryUsesBackupWithSameHistoryAndCorrectProviderParameters() {
+        enableBackup();
+        String input = "那已有的预约呢？";
+        String complete = "信用分低于60分时，已有的会议室预约还能查看吗？";
+        backupOutput.set(modelResult(complete, List.of(complete)));
+        List<String> invalid = List.of("  ", "{bad JSON}",
+                "{\"rewrittenQuestion\":\"缺少子问题\"}",
+                "{\"rewrittenQuestion\":\"空子问题\",\"subQuestions\":[]}");
+        for (String content : invalid) {
+            modelOutput.set(content);
+            int before = requestCount.get();
+            RewriteResultDTO result = rewrite.rewrite(input, oneRound());
+
+            assertEquals(before + 2, requestCount.get());
+            assertFalse(result.isFallback());
+            assertTrue(result.isBackupUsed());
+            assertEquals(complete, result.getRewrittenQuestion());
+            assertEquals(List.of(complete), result.getSubQuestions());
+            assertEquals("zai-org/GLM-5.3-Flash", result.getModel());
+            assertNotNull(result.getPrimaryErrorType());
+            assertNotNull(result.getPrimaryErrorMessage());
+            JsonObject primary = capturedBodies.get(before);
+            JsonObject backup = capturedBodies.get(before + 1);
+            assertEquals(primary.get("messages"), backup.get("messages"));
+            assertEquals("zai-org/GLM-5.3-Flash", backup.get("model").getAsString());
+            assertFalse(primary.has("response_format"));
+            assertFalse(backup.has("response_format"));
+            assertFalse(backup.get("enable_thinking").getAsBoolean());
+            assertFalse(backup.has("thinking"));
+            assertEquals("http://backup.test/v1/chat/completions", capturedRequests.get(before + 1).url().toString());
+            assertEquals("Bearer fake-backup-key", capturedRequests.get(before + 1).header("Authorization"));
+            assertEquals("Bearer fake-key-for-local-test", capturedRequests.get(before).header("Authorization"));
+        }
+    }
+
+    @Test
+    void truncatedPrimaryUsesBackupRatherThanLosingPartOfTheQuestion() {
+        enableBackup();
+        String input = "会议室怎么预约，差旅报销要什么材料？";
+        modelOutput.set(modelResult("会议室怎么预约？", List.of("会议室怎么预约？")));
+        finishReason.set("length");
+        backupOutput.set(modelResult(input, List.of("会议室怎么预约？", "差旅报销要什么材料？")));
+
+        RewriteResultDTO result = rewrite.rewrite(input, List.of());
+
+        assertEquals(2, requestCount.get());
+        assertFalse(result.isFallback());
+        assertTrue(result.isBackupUsed());
+        assertEquals(2, result.getSubQuestions().size());
+        assertTrue(result.getPrimaryErrorMessage().contains("length"));
+    }
+
+    @Test
+    void bothModelsFailOnlyThenUseOriginalAndDoNotRetryAgain() {
+        enableBackup();
+        String input = "这个提示该先检查哪里？";
+        modelOutput.set("     ");
+        backupOutput.set("{bad JSON}");
+
+        RewriteResultDTO result = rewrite.rewrite(input, oneRound());
+
+        assertEquals(2, requestCount.get());
+        assertTrue(result.isFallback());
+        assertTrue(result.isBackupUsed());
+        assertEquals(input, result.getRewrittenQuestion());
+        assertEquals(List.of(input), result.getSubQuestions());
+        assertEquals("改写模型返回空正文", result.getPrimaryErrorMessage());
+        assertEquals("JsonSyntaxException", result.getErrorType());
+    }
+
+    @Test
+    void upstreamHttpFailureAlsoUsesTheSingleBackupAttempt() {
+        enableBackup();
+        String input = "怎么取消预约？";
+        modelOutput.set("");
+        responseStatus.set(503);
+        backupOutput.set(modelResult(input, List.of(input)));
+
+        RewriteResultDTO result = rewrite.rewrite(input, List.of());
+
+        assertEquals(2, requestCount.get());
+        assertFalse(result.isFallback());
+        assertTrue(result.isBackupUsed());
+        assertEquals("IOException", result.getPrimaryErrorType());
+    }
+
+    private void enableBackup() {
+        ReflectionTestUtils.setField(rewrite, "backupModel", "zai-org/GLM-5.3-Flash");
     }
 
     private String modelResult(String rewrittenQuestion, List<String> subQuestions) {

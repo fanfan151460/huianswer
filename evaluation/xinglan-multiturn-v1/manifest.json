@@ -1,0 +1,368 @@
+{
+  "dataset_id": "xinglan-multiturn-v1",
+  "version": "1.0",
+  "created_date": "2026-10-17",
+  "synthetic": true,
+  "business_timezone": "Asia/Shanghai",
+  "purpose": "context-dependent follow-ups, subject corrections, and explicit-topic controls",
+  "base_dataset_id": "xinglan-shop-v2",
+  "knowledge_base_count": 4,
+  "inherited_document_count": 16,
+  "new_document_count": 12,
+  "document_count": 28,
+  "dev_case_count": 12,
+  "retrieval_case_count": 12,
+  "holdout_used": false,
+  "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+  "dimension": 1024,
+  "final_top_k": 6,
+  "max_distance": 0.6,
+  "documents": [
+    {
+      "source_id": "P01",
+      "kb_key": "products",
+      "path": "../xinglan-shop-v1/corpus/products/P01_产品目录与选型.txt",
+      "added_in_v2": false,
+      "sha256": "96db61e6b81c2785f709ed05f5a1d634f0ff2c1bfcf504acd872ef540eb8a6a8"
+    },
+    {
+      "source_id": "P02",
+      "kb_key": "products",
+      "path": "../xinglan-shop-v1/corpus/products/P02_配件兼容与供电.txt",
+      "added_in_v2": false,
+      "sha256": "3395f12eb9e768933a35c71943f404ab6ac70d473a3ab1d7c4dfba9ed94a5888"
+    },
+    {
+      "source_id": "P03",
+      "kb_key": "products",
+      "path": "../xinglan-shop-v1/corpus/products/P03_操作保养与滤芯复位.txt",
+      "added_in_v2": false,
+      "sha256": "954cc5441b2a176131c07fb919813a757296ffd2d6291f8f30d5dde8af33ca08"
+    },
+    {
+      "source_id": "P04",
+      "kb_key": "products",
+      "path": "../xinglan-shop-v1/corpus/products/P04_错误码与故障排查.txt",
+      "added_in_v2": false,
+      "sha256": "91360d1dae26e3eaf3af50430234ee3dda86fb0277b04cde626100a26ede62be"
+    },
+    {
+      "source_id": "O01",
+      "kb_key": "orders",
+      "path": "../xinglan-shop-v1/corpus/orders/O01_下单支付与订单状态.txt",
+      "added_in_v2": false,
+      "sha256": "36d34792b4b2e311efee241b72afa7e6f45b0764c63fa3c0da06a650ecb8d25d"
+    },
+    {
+      "source_id": "O02",
+      "kb_key": "orders",
+      "path": "../xinglan-shop-v1/corpus/orders/O02_订单取消与修改.txt",
+      "added_in_v2": false,
+      "sha256": "cac00a673dc79a5f9d60015589aaafafb500674b1000ca8821404dbc3de4274c"
+    },
+    {
+      "source_id": "O03",
+      "kb_key": "orders",
+      "path": "../xinglan-shop-v1/corpus/orders/O03_退款发起与到账.txt",
+      "added_in_v2": false,
+      "sha256": "fe9bf9076efca17a9b666de0c37b8f1a68d3f8c618fd1b5dc5bb9f208fb47ee6"
+    },
+    {
+      "source_id": "O04",
+      "kb_key": "orders",
+      "path": "../xinglan-shop-v1/corpus/orders/O04_发票与交易凭证.txt",
+      "added_in_v2": false,
+      "sha256": "59605d047f15e21d19da98f54cc7e690bb032f6a4dbe78ce465472880d3e7134"
+    },
+    {
+      "source_id": "D01",
+      "kb_key": "shipping",
+      "path": "../xinglan-shop-v1/corpus/shipping/D01_配送范围与时效.txt",
+      "added_in_v2": false,
+      "sha256": "0f72d1d52de35be49b454456341a754a60b59e1531d4c15f54714389295f0c57"
+    },
+    {
+      "source_id": "D02",
+      "kb_key": "shipping",
+      "path": "../xinglan-shop-v1/corpus/shipping/D02_配送运费与拆包.txt",
+      "added_in_v2": false,
+      "sha256": "d4f0834cb0070e63cb797205a4b231786c77a147e67963b0b478dec17657c739"
+    },
+    {
+      "source_id": "D03",
+      "kb_key": "shipping",
+      "path": "../xinglan-shop-v1/corpus/shipping/D03_派送地址与包裹拦截.txt",
+      "added_in_v2": false,
+      "sha256": "d639011e184bff46f05d2884ee091c8d6ab63c02f57a62fa98145181edcd7dfb"
+    },
+    {
+      "source_id": "D04",
+      "kb_key": "shipping",
+      "path": "../xinglan-shop-v1/corpus/shipping/D04_签收检查与物流异常.txt",
+      "added_in_v2": false,
+      "sha256": "02a8f1a902104c9d48fbc16a8e6653f9b3b6f71aef055cf28569018b6058c59a"
+    },
+    {
+      "source_id": "S01",
+      "kb_key": "aftersales",
+      "path": "../xinglan-shop-v1/corpus/aftersales/S01_退换货适用条件.txt",
+      "added_in_v2": false,
+      "sha256": "bffd5e7c632e577e2c76b45b2007ba06f1269d7a688e76cb26705ea62004d1cd"
+    },
+    {
+      "source_id": "S02",
+      "kb_key": "aftersales",
+      "path": "../xinglan-shop-v1/corpus/aftersales/S02_售后申请与寄回.txt",
+      "added_in_v2": false,
+      "sha256": "41ae13b35619087b1ac280a52842e36bf82e816f332f4a629716889ca8a02b71"
+    },
+    {
+      "source_id": "S03",
+      "kb_key": "aftersales",
+      "path": "../xinglan-shop-v1/corpus/aftersales/S03_售后费用与退款范围.txt",
+      "added_in_v2": false,
+      "sha256": "442b1805e2d12e1133bb58f388c8a7a83841cab4fbac020d36954b0464afbbe9"
+    },
+    {
+      "source_id": "S04",
+      "kb_key": "aftersales",
+      "path": "../xinglan-shop-v1/corpus/aftersales/S04_保修与维修.txt",
+      "added_in_v2": false,
+      "sha256": "5d38917c75768eaf6ee03f7ed70f2c5206587cb3b6e1cd05e222a8afaa6f9f93"
+    },
+    {
+      "source_id": "P05",
+      "kb_key": "products",
+      "title": "联网恢复与面板锁定",
+      "path": "../xinglan-shop-v2/corpus/products/P05_联网恢复与面板锁定.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "P05-01",
+        "P05-02",
+        "P05-03",
+        "P05-04",
+        "P05-05",
+        "P05-06",
+        "P05-07"
+      ],
+      "characters": 1360,
+      "bytes": 3679,
+      "sha256": "9331d94a3fcd1e3c3cdd48896d43dd856522678f84d553f21db27a5c7fa66504"
+    },
+    {
+      "source_id": "P06",
+      "kb_key": "products",
+      "title": "水箱清洁提醒与夜间显示",
+      "path": "../xinglan-shop-v2/corpus/products/P06_水箱清洁提醒与夜间显示.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "P06-01",
+        "P06-02",
+        "P06-03",
+        "P06-04",
+        "P06-05",
+        "P06-06",
+        "P06-07"
+      ],
+      "characters": 1347,
+      "bytes": 3630,
+      "sha256": "bd42e7f0e3dd9b1538c75cb8d5815db7576529d00a21fd514fe6d859298ccbe4"
+    },
+    {
+      "source_id": "P07",
+      "kb_key": "products",
+      "title": "维护诊断与部件批号识别",
+      "path": "../xinglan-shop-v2/corpus/products/P07_维护诊断与部件批号识别.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "P07-01",
+        "P07-02",
+        "P07-03",
+        "P07-04",
+        "P07-05",
+        "P07-06",
+        "P07-07"
+      ],
+      "characters": 1353,
+      "bytes": 3686,
+      "sha256": "6a955b0887fabda587bd66126c05ccc5674ff68d22c34c423e22ff4943aad4e9"
+    },
+    {
+      "source_id": "O05",
+      "kb_key": "orders",
+      "title": "企业采购结算与票据",
+      "path": "../xinglan-shop-v2/corpus/orders/O05_企业采购结算与票据.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "O05-01",
+        "O05-02",
+        "O05-03",
+        "O05-04",
+        "O05-05",
+        "O05-06",
+        "O05-07"
+      ],
+      "characters": 1297,
+      "bytes": 3650,
+      "sha256": "68b830c01c4b38e31279d1dee1003794e7270bc96bb88c71f38f0adc09413c87"
+    },
+    {
+      "source_id": "O06",
+      "kb_key": "orders",
+      "title": "预售定金与尾款订单",
+      "path": "../xinglan-shop-v2/corpus/orders/O06_预售定金与尾款订单.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "O06-01",
+        "O06-02",
+        "O06-03",
+        "O06-04",
+        "O06-05",
+        "O06-06",
+        "O06-07"
+      ],
+      "characters": 1325,
+      "bytes": 3732,
+      "sha256": "00bcf70eb71c79d80fe857a08c949c1b1a61bdc5fd7cc5523271a95bde91b6a5"
+    },
+    {
+      "source_id": "O07",
+      "kb_key": "orders",
+      "title": "维修服务订单支付与凭证",
+      "path": "../xinglan-shop-v2/corpus/orders/O07_维修服务订单支付与凭证.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "O07-01",
+        "O07-02",
+        "O07-03",
+        "O07-04",
+        "O07-05",
+        "O07-06",
+        "O07-07"
+      ],
+      "characters": 1327,
+      "bytes": 3746,
+      "sha256": "57a30536fa8be84c669320710960a9372864012ccd728a17a92a9acfc3268241"
+    },
+    {
+      "source_id": "D05",
+      "kb_key": "shipping",
+      "title": "企业批量配送与交付预约",
+      "path": "../xinglan-shop-v2/corpus/shipping/D05_企业批量配送与交付预约.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "D05-01",
+        "D05-02",
+        "D05-03",
+        "D05-04",
+        "D05-05",
+        "D05-06",
+        "D05-07"
+      ],
+      "characters": 1327,
+      "bytes": 3652,
+      "sha256": "488c8c9834633459862ea5ecd6bc7ea64a0bc63f9db54ecb2877a9fe6f4e5a66"
+    },
+    {
+      "source_id": "D06",
+      "kb_key": "shipping",
+      "title": "预售分批发货与预约签收",
+      "path": "../xinglan-shop-v2/corpus/shipping/D06_预售分批发货与预约签收.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "D06-01",
+        "D06-02",
+        "D06-03",
+        "D06-04",
+        "D06-05",
+        "D06-06",
+        "D06-07"
+      ],
+      "characters": 1293,
+      "bytes": 3658,
+      "sha256": "1ba258b396ffb2954d7a187b07b603c1bb3b7b4f6d3df923f859ffd011491503"
+    },
+    {
+      "source_id": "D07",
+      "kb_key": "shipping",
+      "title": "维修寄送与借用机交接",
+      "path": "../xinglan-shop-v2/corpus/shipping/D07_维修寄送与借用机交接.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "D07-01",
+        "D07-02",
+        "D07-03",
+        "D07-04",
+        "D07-05",
+        "D07-06",
+        "D07-07"
+      ],
+      "characters": 1293,
+      "bytes": 3658,
+      "sha256": "a5d18153ed6a179ad4462fa8c2a8f8ee0d59bc2f57e5bcacba35e91f276da02d"
+    },
+    {
+      "source_id": "S05",
+      "kb_key": "aftersales",
+      "title": "企业采购验收与合同退换",
+      "path": "../xinglan-shop-v2/corpus/aftersales/S05_企业采购验收与合同退换.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "S05-01",
+        "S05-02",
+        "S05-03",
+        "S05-04",
+        "S05-05",
+        "S05-06",
+        "S05-07"
+      ],
+      "characters": 1290,
+      "bytes": 3643,
+      "sha256": "9c2123db7f375720f0867411376f41af1b1e0f334882908bb01548285cce9c14"
+    },
+    {
+      "source_id": "S06",
+      "kb_key": "aftersales",
+      "title": "体验借用归还与押金核算",
+      "path": "../xinglan-shop-v2/corpus/aftersales/S06_体验借用归还与押金核算.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "S06-01",
+        "S06-02",
+        "S06-03",
+        "S06-04",
+        "S06-05",
+        "S06-06",
+        "S06-07"
+      ],
+      "characters": 1280,
+      "bytes": 3601,
+      "sha256": "f463f1b4ec9d00b13979cc603a7f5b70bad25415cfcc6dd8f131aa4b92f1768f"
+    },
+    {
+      "source_id": "S07",
+      "kb_key": "aftersales",
+      "title": "延保服务包激活与退订",
+      "path": "../xinglan-shop-v2/corpus/aftersales/S07_延保服务包激活与退订.txt",
+      "added_in_v2": true,
+      "section_ids": [
+        "S07-01",
+        "S07-02",
+        "S07-03",
+        "S07-04",
+        "S07-05",
+        "S07-06",
+        "S07-07"
+      ],
+      "characters": 1324,
+      "bytes": 3731,
+      "sha256": "0aea0a4132ca7c578ee6e3947b81eee92fb53c9c3bc8e5868f7800310a238959"
+    }
+  ],
+  "dev_cases_sha256": "5d4e914c4339f9236e16c61a66e7784fc2faa68fce1ac5cae5aa480de37e7c9a",
+  "corpus_sha256": "53fa46bbc63a6c1e67f8e9e5992f1ced1d82fde8f645c349cc8f6f73b4677f7e",
+  "multi_turn_case_count": 12,
+  "context_dependent_case_count": 10,
+  "control_case_count": 2,
+  "cases_sha256": "14ae745c70c8f2d269c7a941decbd8470cecd72b118350ea2fb58982a3613935"
+}

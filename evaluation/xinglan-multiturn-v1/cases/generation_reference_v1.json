@@ -1,0 +1,217 @@
+{
+  "version": "multiturn-dev-v1",
+  "dataset_id": "xinglan-multiturn-v1",
+  "source_cases": "dev.jsonl",
+  "source_cases_sha256": "14ae745c70c8f2d269c7a941decbd8470cecd72b118350ea2fb58982a3613935",
+  "scope": "同一v2语料上的多轮上下文依赖诊断集；不表示真实用户流量，也不预设改写一定提升。",
+  "scoring_policy": "检索指标只使用本轮实际召回资料；生成允许使用真实历史。答案要点不因正确扩写扣分，额外事实由faithfulness检查。",
+  "cases": [
+    {
+      "id": "MT-001",
+      "question": "这个期限从什么时候开始算，多久结束？",
+      "reference_answer": "普通现货零售订单的支付有效期从订单创建时刻起计算，为30分钟；超过30分钟仍未支付，原订单自动关闭，不能在已关闭订单中补付款。",
+      "expected_answer_points": [
+        "普通现货零售订单的支付有效期从订单创建时刻起计算，为30分钟",
+        "超过30分钟仍未支付，原订单自动关闭，不能在已关闭订单中补付款"
+      ],
+      "forbidden_claims": [
+        "按预售定金单的60分钟回答",
+        "按尾款的72小时回答"
+      ],
+      "evidence_sections": [
+        "O01-02"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-002",
+      "question": "这个期限从什么时候开始算，多久结束？",
+      "reference_answer": "PS定金单的支付窗口从定金单创建时刻起计算，为60分钟；窗口结束仍未支付会关闭本次定金单，不能直接在已关闭的定金单中补付。",
+      "expected_answer_points": [
+        "PS定金单的支付窗口从定金单创建时刻起计算，为60分钟",
+        "窗口结束仍未支付会关闭本次定金单，不能直接在已关闭的定金单中补付"
+      ],
+      "forbidden_claims": [
+        "套用普通现货订单30分钟",
+        "套用尾款通知后72小时"
+      ],
+      "evidence_sections": [
+        "O06-02"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-003",
+      "question": "这个期限从什么时候开始算，多久结束？",
+      "reference_answer": "未激活且未使用的YB服务包，可在服务包付款次日起7个自然日内提交在线退订；最后一日截止23:59，起点不按主机签收日期计算。",
+      "expected_answer_points": [
+        "未激活且未使用的YB服务包，可在服务包付款次日起7个自然日内提交在线退订",
+        "最后一日截止23:59，起点不按主机签收日期计算"
+      ],
+      "forbidden_claims": [
+        "从主机签收日起算",
+        "把提交退订申请说成退款已经完成"
+      ],
+      "evidence_sections": [
+        "S07-03"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-004",
+      "question": "这个期限从什么时候开始算，多久结束？",
+      "reference_answer": "TY标准体验周期从设备实际交付次日起算，为10个自然日，交付当日不计为第一天；应在借用单约定归还日18:00前完成约定交寄或现场交回。",
+      "expected_answer_points": [
+        "TY标准体验周期从设备实际交付次日起算，为10个自然日，交付当日不计为第一天",
+        "应在借用单约定归还日18:00前完成约定交寄或现场交回"
+      ],
+      "forbidden_claims": [
+        "套用普通商品七日退货",
+        "从押金付款日开始计算",
+        "把截止时间说成23:59"
+      ],
+      "evidence_sections": [
+        "S06-02"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-005",
+      "question": "还能在线申请多久，是从哪天开始算？",
+      "reference_answer": "普通零售订单电子发票可在交易完成当日申请，也可在交易完成次日起30个自然日内申请；填写单位抬头不会将这张普通零售订单的窗口变成QY采购票据窗口。",
+      "expected_answer_points": [
+        "普通零售订单电子发票可在交易完成当日申请，也可在交易完成次日起30个自然日内申请",
+        "填写单位抬头不会将这张普通零售订单的窗口变成QY采购票据窗口"
+      ],
+      "forbidden_claims": [
+        "套用财务确认结算次日起45天",
+        "从支付日或签收日直接起算"
+      ],
+      "evidence_sections": [
+        "O04-01",
+        "O05-01"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-006",
+      "question": "还能在线申请多久，是从哪天开始算？",
+      "reference_answer": "QY采购票据申请在财务确认结算后开放，确认结算当日可以申请；财务确认结算次日起45个自然日内可以在线提交。",
+      "expected_answer_points": [
+        "QY采购票据申请在财务确认结算后开放，确认结算当日可以申请",
+        "财务确认结算次日起45个自然日内可以在线提交"
+      ],
+      "forbidden_claims": [
+        "套用普通零售订单交易完成次日起30天",
+        "从首批交付或支付完成直接起算"
+      ],
+      "evidence_sections": [
+        "O05-06"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-007",
+      "question": "这个提示该先检查哪里？",
+      "reference_answer": "当前机型是SL-H200 Mini，E07表示供电不足；应检查USB-C线是否松动或破损，改用AD-5M原配电源，确认供电满足5V 2A。",
+      "expected_answer_points": [
+        "当前机型是SL-H200 Mini，E07表示供电不足",
+        "应检查USB-C线是否松动或破损，改用AD-5M原配电源，确认供电满足5V 2A"
+      ],
+      "forbidden_claims": [
+        "沿用上一台SL-A100的滤芯仓盖解释",
+        "套用标准H200水箱未就位",
+        "建议提高到9V或12V"
+      ],
+      "evidence_sections": [
+        "P04-05"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-008",
+      "question": "这个提示该先检查哪里？",
+      "reference_answer": "当前机型是SL-A100基础版，E07表示滤芯仓未闭合或仓盖未正确到位；应先关机断电，核对F-A10滤芯安装方向，检查保护袋或异物并重新闭合仓盖，再恢复原配电源重试。",
+      "expected_answer_points": [
+        "当前机型是SL-A100基础版，E07表示滤芯仓未闭合或仓盖未正确到位",
+        "应先关机断电，核对F-A10滤芯安装方向，检查保护袋或异物并重新闭合仓盖，再恢复原配电源重试"
+      ],
+      "forbidden_claims": [
+        "沿用上一台Mini的供电不足解释",
+        "套用Pro激光传感器积尘解释",
+        "用长按复位代替闭合仓盖"
+      ],
+      "evidence_sections": [
+        "P04-02"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-009",
+      "question": "能按刚才说的办法分两笔付吗？",
+      "reference_answer": "普通现货零售订单不支持将同一订单拆成多个支付渠道分次付清，应按订单独立付款。",
+      "expected_answer_points": [
+        "普通现货零售订单不支持将同一订单拆成多个支付渠道分次付清，应按订单独立付款"
+      ],
+      "forbidden_claims": [
+        "直接按QY采购预付款加尾款办理",
+        "承诺未记载的分阶段付款方案"
+      ],
+      "evidence_sections": [
+        "O01-03"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-010",
+      "question": "能按刚才说的办法分两笔付吗？",
+      "reference_answer": "QY采购确认单明确列出预付款和尾款时，可以按确认单约定分阶段支付。",
+      "expected_answer_points": [
+        "QY采购确认单明确列出预付款和尾款时，可以按确认单约定分阶段支付"
+      ],
+      "forbidden_claims": [
+        "忽略采购确认单并按零售规则一律拒绝",
+        "承诺无需确认单即可任意拆分"
+      ],
+      "evidence_sections": [
+        "O05-03"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-011",
+      "question": "现在换个型号：SL-H200 Mini显示E07，能改用9V电源解决吗？",
+      "reference_answer": "SL-H200 Mini显示E07表示供电不足，但不能改用9V电源处理；应使用符合5V 2A要求的供电，检查原配USB-C线并优先使用AD-5M电源。",
+      "expected_answer_points": [
+        "SL-H200 Mini显示E07表示供电不足，但不能改用9V电源处理",
+        "应使用符合5V 2A要求的供电，检查原配USB-C线并优先使用AD-5M电源"
+      ],
+      "forbidden_claims": [
+        "将当前明确的Mini改写成历史中的SL-A100",
+        "建议9V或12V输入"
+      ],
+      "evidence_sections": [
+        "P04-05",
+        "P02-04"
+      ],
+      "generation_scorable": true
+    },
+    {
+      "id": "MT-012",
+      "question": "另外一笔是QY企业采购，财务已经确认结算，它的票据在线申请窗口多久，从哪天算？",
+      "reference_answer": "QY采购票据在财务确认结算当日可以申请；财务确认结算次日起45个自然日内可以在线提交。",
+      "expected_answer_points": [
+        "QY采购票据在财务确认结算当日可以申请",
+        "财务确认结算次日起45个自然日内可以在线提交"
+      ],
+      "forbidden_claims": [
+        "将当前明确的QY改写成历史普通零售订单",
+        "套用普通零售30天窗口"
+      ],
+      "evidence_sections": [
+        "O05-06"
+      ],
+      "generation_scorable": true
+    }
+  ]
+}

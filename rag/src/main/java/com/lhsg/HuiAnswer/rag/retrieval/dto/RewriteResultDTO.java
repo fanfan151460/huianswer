@@ -19,4 +19,14 @@ public class RewriteResultDTO {
     private boolean fallback;
 
     private String errorType;
+
+    /** 实际采用的改写模型；全部失败时记录最后尝试的模型。 */
+    private String model;
+
+    /** 是否尝试了备用模型；备用成功时 fallback 仍为 false。 */
+    private boolean backupUsed;
+
+    /** 主模型失败的原因，便于区分正常主调用和备用救回的结果。 */
+    private String primaryErrorType;
+    private String primaryErrorMessage;
 }

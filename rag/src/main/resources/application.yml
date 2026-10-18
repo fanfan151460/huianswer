@@ -40,6 +40,8 @@ rocketmq:
 rag:
   evaluation:
     enabled: true
+    # 本地 C 对照：子问题并行路由检索；改为 true 可切回 B 组完整问题路由检索。
+    single-question: false
   ingestion:
     mq-enabled: true
   storage:
@@ -66,6 +68,9 @@ rag:
     max-tokens: 512
     temperature: 0.1
     timeout-seconds: 10
+    # 主模型失败后仅调用一次，复用 HUIANSWER_AI_API_KEY 和硅基流动地址。
+    backup-model: ${HUIANSWER_REWRITE_BACKUP_MODEL:zai-org/GLM-5.3-Flash}
+    backup-timeout-seconds: 10
   intent:
     # 每个子问题独立分类、选库；超时或结果无效时仅降级该子问题。
     max-tokens: 512

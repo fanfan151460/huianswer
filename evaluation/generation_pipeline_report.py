@@ -16,7 +16,10 @@ def percentile(values, quantile):
 
 
 def intent_check(row):
-    routes = (row.get("pipeline_trace") or {}).get("routes", [])
+    trace = row.get("pipeline_trace") or {}
+    if trace.get("intent_routing_enabled") is False:
+        return None
+    routes = trace.get("routes", [])
     allowed = row.get("acceptable_intents", [])
     if not routes or not allowed or any(route.get("fallback") for route in routes):
         return None
@@ -66,6 +69,8 @@ def write_pipeline_report(directory, rows):
         rewrite = trace.get("rewrite", {})
         stats = row.get("generation_stats") or {}
         lines.extend(["", f"## {row['case_id']}", "", "**原问题**", "", row["user_input"], ""])
+        if trace.get("evaluation_mode"):
+            lines.extend(["**评测方案**", "", f"{trace['evaluation_mode']}：{trace.get('description', '')}", ""])
         if row.get("warmup_history"):
             lines.extend(["<details>", "<summary>展开本题实际前置对话</summary>", ""])
             for message in row["warmup_history"]:
@@ -82,11 +87,13 @@ def write_pipeline_report(directory, rows):
             errors = []
             for route in trace.get("routes", []):
                 names = "、".join(route.get("kb_names") or [])
-                if route.get("intent") == "NO_MATCH":
+                if route.get("search_scope") == "ALL":
+                    names = "全库（直接检索）"
+                elif route.get("intent") == "NO_MATCH":
                     names = "全库（NO_MATCH）"
                 elif not names:
                     names = "不检索" if route.get("search_status") == "skipped" else "未记录"
-                lines.append(f"| {route.get('index')} | {cell(route.get('question', ''))} | {route.get('intent')} | {cell(names)} | {'是' if route.get('fallback') else '否'} | {show_ms(route.get('route_ms'))} | {route.get('search_status')} | {show_ms(route.get('search_ms'))} | {len(route.get('candidate_chunk_ids', []))} |")
+                lines.append(f"| {route.get('index')} | {cell(route.get('question', ''))} | {route.get('intent') if route.get('route_status') != 'skipped' else '未执行'} | {cell(names)} | {'是' if route.get('fallback') else '否'} | {show_ms(route.get('route_ms'))} | {route.get('search_status')} | {show_ms(route.get('search_ms'))} | {len(route.get('candidate_chunk_ids', []))} |")
                 if route.get("route_error_type") or route.get("search_error_type"):
                     errors.append(f"子问题 {route.get('index')} 异常：路由={route.get('route_error_type') or '无'}；检索={route.get('search_error_type') or '无'}。")
             lines.extend(["", *errors, "", "允许的意图：" + "、".join(row.get("acceptable_intents", [])) + "。", "",

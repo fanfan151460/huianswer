@@ -5,7 +5,6 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.rag.config.ApiUrl;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeBaseDO;
@@ -72,7 +71,7 @@ public class Identify {
             } catch (Exception e) {
                 if (StrUtil.isBlank(backupModel) || StrUtil.isBlank(backupApiKey)
                         || Thread.currentThread().isInterrupted()) {
-                    throw new ServiceException("模型请求参数异常");
+                    throw e;
                 }
                 log.warn("主模型：{} 意图路由失败，question：{}, 异常信息：{}",chatModel, question, e.getMessage());
                 String callModel = callModel(question, catalog, true);
@@ -82,14 +81,15 @@ public class Identify {
             log.error("子问题 {} 模型意图路由失败，降级为 NO_MATCH，异常类型：{}",
                     index, e.getClass().getSimpleName());
             return new IntentResultDTO().setIndex(index)
-                    .setIntent(IntentEnum.NO_MATCH).setKbIds(List.of());
+                    .setIntent(IntentEnum.NO_MATCH).setKbIds(List.of())
+                    .setFallback(true).setErrorType(e.getClass().getSimpleName());
         }
     }
 
     private String callModel(String question, List<KnowledgeCatalogDTO> catalog, boolean useBackup) throws IOException {
         Request request = getRequest(question, catalog, useBackup);
         Call call = httpClient.newCall(request);
-        call.timeout().timeout(useBackup ? timeoutSeconds : backupTimeoutSeconds, TimeUnit.SECONDS);
+        call.timeout().timeout(useBackup ? backupTimeoutSeconds : timeoutSeconds, TimeUnit.SECONDS);
         String content;
         try (Response response = call.execute()) {
             ResponseBody body = response.body();
@@ -133,7 +133,7 @@ public class Identify {
         messages.add(user);
 
         JsonObject body = new JsonObject();
-        body.addProperty("model", chatModel);
+        body.addProperty("model", useBackup ? backupModel : chatModel);
         body.add("messages", messages);
         body.addProperty("stream", false);
         body.addProperty("max_tokens", maxTokens);

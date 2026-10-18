@@ -4,10 +4,11 @@ import cn.hutool.core.util.StrUtil;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.rag.config.ApiUrl;
-import com.lhsg.HuiAnswer.rag.retrieval.dto.RewriteResultDTO;
 import com.lhsg.HuiAnswer.rag.memory.dto.search.SearchMemoryDTO;
+import com.lhsg.HuiAnswer.rag.retrieval.dto.RewriteResultDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
@@ -44,6 +45,13 @@ public class RewriteQuestion {
     private int timeoutSeconds;
     @Value("${rag.evaluation.enabled:false}")
     private boolean enabledAssess;
+    @Value("${rag.rewrite.backup-model:}")
+    private String backupModel;
+    // 复用向量化、重排序使用的硅基流动密钥。
+    @Value("${rag.ai.siliconflow.api-key}")
+    private String backupApiKey;
+    @Value("${rag.rewrite.backup-timeout-seconds:5}")
+    private int backupTimeoutSeconds;
 
     /** 一次完成改写和拆分；失败时将原文作为唯一子问题。 */
     @TimeAnnotation(method = "问题改写与拆分")
@@ -54,21 +62,16 @@ public class RewriteQuestion {
         // 第一轮也可能有多个需求，因此没有历史时仍然调用模型。
         String modelContent = null;
         try {
-            Request request = getRequest(question, history);
-            Call call = httpClient.newCall(request);
-            call.timeout().timeout(timeoutSeconds, TimeUnit.SECONDS);
-            try (Response response = call.execute()) {
-                ResponseBody responseBody = response.body();
-                if (!response.isSuccessful() || responseBody == null) {
-                    throw new IOException("问题改写接口返回 HTTP " + response.code());
+            try {
+                modelContent = callModel(question, history, false);
+                return parseResult(modelContent);
+            } catch (Exception primaryFailure) {
+                // 主模型失败后只尝试一次备用模型，未配置时直接降级。
+                if (StrUtil.isBlank(backupModel) || StrUtil.isBlank(backupApiKey)
+                        || Thread.currentThread().isInterrupted()) {
+                    throw new ServiceException("模型请求参数异常");
                 }
-                JsonObject json = gson.fromJson(responseBody.string(), JsonObject.class);
-                JsonObject choice = json.getAsJsonArray("choices").get(0).getAsJsonObject();
-                // 截断的改写可能丢掉问题条件，不能拿去检索。
-                if (!"stop".equals(choice.get("finish_reason").getAsString())) {
-                    throw new IllegalStateException("问题改写未完整结束");
-                }
-                modelContent = choice.getAsJsonObject("message").get("content").getAsString();
+                modelContent = callModel(question, history, true);
                 return parseResult(modelContent);
             }
         } catch (Exception e) {
@@ -82,6 +85,27 @@ public class RewriteQuestion {
                 log.warn("问题改写与拆分失败，使用原问题，异常类型：{}", e.getClass().getSimpleName());
             }
             return fallback;
+        }
+    }
+
+    /** 调用指定模型并取回正文；HTTP 异常、截断和空正文都交由上层统一降级。 */
+    private String callModel(String question, List<SearchMemoryDTO> history,
+                             boolean useBackup) throws IOException {
+        Request request = getRequest(question, history, useBackup);
+        Call call = httpClient.newCall(request);
+        call.timeout().timeout(useBackup ? backupTimeoutSeconds : timeoutSeconds, TimeUnit.SECONDS);
+        try (Response response = call.execute()) {
+            ResponseBody responseBody = response.body();
+            if (!response.isSuccessful() || responseBody == null) {
+                throw new IOException("问题改写接口返回 HTTP " + response.code());
+            }
+            JsonObject json = gson.fromJson(responseBody.string(), JsonObject.class);
+            JsonObject choice = json.getAsJsonArray("choices").get(0).getAsJsonObject();
+            // 截断的改写可能丢掉问题条件，不能拿去检索。
+            if (!"stop".equals(choice.get("finish_reason").getAsString())) {
+                throw new IllegalStateException("问题改写未完整结束");
+            }
+            return choice.getAsJsonObject("message").get("content").getAsString();
         }
     }
 
@@ -110,7 +134,7 @@ public class RewriteQuestion {
         return result;
     }
 
-    private Request getRequest(String question, List<SearchMemoryDTO> history) {
+    private Request getRequest(String question, List<SearchMemoryDTO> history, boolean useBackup) {
         JsonArray messages = new JsonArray();
         JsonObject system = new JsonObject();
         system.addProperty("role", "system");
@@ -132,20 +156,24 @@ public class RewriteQuestion {
         messages.add(current);
 
         JsonObject body = new JsonObject();
-        body.addProperty("model", chatModel);
+        body.addProperty("model", useBackup ? backupModel : chatModel);
         body.add("messages", messages);
         body.addProperty("stream", false);
         body.addProperty("max_tokens", maxTokens);
         body.addProperty("temperature", temperature);
-        JsonObject thinking = new JsonObject();
-        thinking.addProperty("type", "disabled");
-        body.add("thinking", thinking);
-        JsonObject responseFormat = new JsonObject();
-        responseFormat.addProperty("type", "json_object");
-        body.add("response_format", responseFormat);
+        if (useBackup) {
+            body.addProperty("enable_thinking", false);
+        } else {
+            JsonObject thinking = new JsonObject();
+            thinking.addProperty("type", "disabled");
+            body.add("thinking", thinking);
+        }
+        // JSON 格式由提示词和示例约束；不启用 response_format，避免模型返回空正文。
         return new Request.Builder()
-                .url(apiUrl.chatCompletionsUrl())
-                .header("Authorization", "Bearer " + apiKey)
+                .url(useBackup
+                        ? apiUrl.getUrl().replaceAll("/+$", "") + "/v1/chat/completions"
+                        : apiUrl.chatCompletionsUrl())
+                .header("Authorization", "Bearer " + (useBackup ? backupApiKey : apiKey))
                 .post(RequestBody.create(body.toString(), JSON))
                 .build();
     }

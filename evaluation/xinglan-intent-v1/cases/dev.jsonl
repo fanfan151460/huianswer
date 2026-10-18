@@ -1,0 +1,16 @@
+{"id": "INT-001", "source_case_id": "MT-001", "question": "那我一直不付款，这笔订单会保留多久？", "acceptable_intents": ["KNOWLEDGE"], "rationale": "上文已明确是普通现货零售订单、待支付状态；当前追问未支付订单的保留期限，属于订单与支付知识库。"}
+{"id": "INT-002", "source_case_id": "MT-001", "question": "明白了，谢谢你刚才解释订单的状态。", "acceptable_intents": ["CHAT"], "rationale": "仅对前面的解释表示理解和感谢，没有新增业务查询。不能因为出现订单两个字就继续检索。"}
+{"id": "INT-003", "source_case_id": "MT-001", "question": "先不说这笔订单了，我另外遇到一个问题，怎么处理？", "acceptable_intents": ["CLARIFY"], "rationale": "明确离开原订单话题，却没有说明新问题是什么；需要补充具体业务和现象，不能沿用原订单补全。"}
+{"id": "INT-004", "source_case_id": "MT-001", "question": "换个话题，河南科技大学学生办理退学后，已缴学费按什么标准退？", "acceptable_intents": ["NO_MATCH"], "rationale": "问题指向明确的学校退费规定，商城商品、订单、配送和售后目录均不覆盖；不是闲聊，也不应沿用商城退款规则。"}
+{"id": "INT-005", "source_case_id": "MT-005", "question": "那这张订单的电子发票最晚什么时候能在线申请？", "acceptable_intents": ["KNOWLEDGE"], "rationale": "上文是交易完成的普通零售订单，单位抬头不改变订单类型；追问发票申请期限，属于订单与支付知识库。"}
+{"id": "INT-006", "source_case_id": "MT-005", "question": "刚才说的发票申请我明白了，多谢。", "acceptable_intents": ["CHAT"], "rationale": "虽然提到了发票，但只是确认理解并致谢，没有提出新的开票问题。"}
+{"id": "INT-007", "source_case_id": "MT-005", "question": "换个事情，我还有一份资料想改一下，应该怎么操作？", "acceptable_intents": ["CLARIFY"], "rationale": "新事情没有说明是哪份资料、属于什么业务，不能直接将其当作上文订单的开票资料。"}
+{"id": "INT-008", "source_case_id": "MT-005", "question": "另外，12306买的高铁票要怎么在手机上办理改签？", "acceptable_intents": ["NO_MATCH"], "rationale": "铁路客票改签是明确的外部业务，商城开票和订单规则不能回答；即使历史在聊发票，也不能强行选商城知识库。"}
+{"id": "INT-009", "source_case_id": "MT-008", "question": "那现在这台显示E07，我应该先检查哪里？", "acceptable_intents": ["KNOWLEDGE"], "rationale": "历史最后已切换为SL-A100基础版，应补全当前型号并查商品与使用知识库，不能沿用更早的SL-H200 Mini。"}
+{"id": "INT-010", "source_case_id": "MT-008", "question": "好的，型号我已经记清楚了，谢谢你的耐心。", "acceptable_intents": ["CHAT"], "rationale": "仅确认已记清型号并致谢，没有询问故障处理；不应因历史含E07而继续检索。"}
+{"id": "INT-011", "source_case_id": "MT-008", "question": "现在是另一台设备，型号还没看，屏幕也有报错，这种要怎么处理？", "acceptable_intents": ["CLARIFY"], "rationale": "主动换成尚未说明型号与错误码的新设备，原来的两个型号均不能代入；先询问型号、报错和现象。"}
+{"id": "INT-012", "source_case_id": "MT-008", "question": "换个问题，Windows 11电脑开机一直蓝屏，显示INACCESSIBLE_BOOT_DEVICE，应该怎么排查？", "acceptable_intents": ["NO_MATCH"], "rationale": "操作系统蓝屏问题的对象与故障码明确，但现有商城商品目录仅覆盖指定型号及其使用，不覆盖Windows系统排障。"}
+{"id": "INT-013", "source_case_id": "MT-009", "question": "那这笔订单到底能不能按我刚才说的方式付款？", "acceptable_intents": ["KNOWLEDGE"], "rationale": "前文已经说明普通现货零售以及微信加支付宝分次付款的设想，追问此支付方案是否允许，属于订单与支付知识库。"}
+{"id": "INT-014", "source_case_id": "MT-009", "question": "好的，谢谢，你解释得挺清楚，我先去看看订单。", "acceptable_intents": ["CHAT"], "rationale": "纯反馈与结束语，没有要求查询或执行订单操作。历史的支付问题不应被再次当作当前问题。"}
+{"id": "INT-015", "source_case_id": "MT-009", "question": "换个问题，我有一笔费用想退，跟刚才这张订单无关，应该怎么办？", "acceptable_intents": ["CLARIFY"], "rationale": "已排除原订单，但未交代费用所属业务和退款条件；不能只看到退费就选商城售后库，也不足以判断明确的外部领域。"}
+{"id": "INT-016", "source_case_id": "MT-009", "question": "另外，国航国内航班的电子客票，起飞前怎么在官网办理改签？", "acceptable_intents": ["NO_MATCH"], "rationale": "航空客票改签的业务、对象和操作目标明确，现有商城知识库不覆盖；不是让用户继续补充商城订单信息。"}

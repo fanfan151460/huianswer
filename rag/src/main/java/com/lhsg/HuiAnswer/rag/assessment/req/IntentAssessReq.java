@@ -8,4 +8,7 @@ public class IntentAssessReq {
 
     private Long conversationId;
 
+    /** 复用旧会话时，截取这条原用户消息之前的历史；不传则按 question 定位。 */
+    private String historyBeforeQuestion;
+
 }

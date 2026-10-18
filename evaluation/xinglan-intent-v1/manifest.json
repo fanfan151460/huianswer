@@ -1,0 +1,22 @@
+{
+  "dataset": "xinglan-intent-v1",
+  "version": 1,
+  "purpose": "四分类意图小样本检查",
+  "cases": "cases/dev.jsonl",
+  "case_count": 16,
+  "expected_intents": [
+    "CHAT",
+    "KNOWLEDGE",
+    "CLARIFY",
+    "NO_MATCH"
+  ],
+  "source_case_ids": [
+    "MT-001",
+    "MT-005",
+    "MT-008",
+    "MT-009"
+  ],
+  "history_mode": "reuse_original_conversation_before_source_question",
+  "scope": "复用固定前置历史，评测改写后路由是否符合预先标注；不评价知识库ID、检索或回答质量",
+  "limitations": "每类4题，不能代表线上总体准确率；不包含同一输入里混合不同意图的拆分题"
+}

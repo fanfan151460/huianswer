@@ -70,7 +70,7 @@ public class Identify {
             int start = content.indexOf('{');
             int end = content.lastIndexOf('}');
             if (start < 0 || end < start) {
-                throw new IllegalStateException("改写模型未返回完整 JSON 对象");
+                throw new IllegalStateException("意图识别模型未返回完整 JSON 对象");
             }
             IntentRespDTO result = gson.fromJson(content.substring(start, end + 1), IntentRespDTO.class);
             return validateResult(result, index, allowedIds);

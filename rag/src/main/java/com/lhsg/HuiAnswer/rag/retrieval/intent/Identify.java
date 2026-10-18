@@ -1,9 +1,11 @@
 package com.lhsg.HuiAnswer.rag.retrieval.intent;
 
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.lhsg.HuiAnswer.framework.exception.ServiceException;
 import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.rag.config.ApiUrl;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeBaseDO;
@@ -47,15 +49,48 @@ public class Identify {
     private double temperature;
     @Value("${rag.intent.timeout-seconds}")
     private int timeoutSeconds;
+    @Value("${rag.rewrite.backup-model:}")
+    private String backupModel;
+    // 复用向量化、重排序使用的硅基流动密钥。
+    @Value("${rag.ai.siliconflow.api-key}")
+    private String backupApiKey;
+    @Value("${rag.rewrite.backup-timeout-seconds:5}")
+    private int backupTimeoutSeconds;
 
-    /** 单个子问题独立路由，后端关联下标；模型失败仅降级当前子问题。 */
+
+    /**
+     * 单个子问题独立路由，后端关联下标；模型失败仅降级当前子问题。
+     */
     @TimeAnnotation(method = "单问题意图路由")
     public IntentResultDTO identifyOne(String question, int index, List<KnowledgeCatalogDTO> catalog) {
         Set<Long> allowedIds = catalog.stream().map(KnowledgeCatalogDTO::getKbId)
                 .collect(Collectors.toSet());
-        // 本地请求构造和超时配置错误正常抛出，不伪装成模型调用失败。
-        Call call = httpClient.newCall(getRequest(question, catalog));
-        call.timeout().timeout(timeoutSeconds, TimeUnit.SECONDS);
+        try {
+            try {
+                String callModel = callModel(question, catalog, false);
+                return validateResult(callModel, index, allowedIds);
+            } catch (Exception e) {
+                if (StrUtil.isBlank(backupModel) || StrUtil.isBlank(backupApiKey)
+                        || Thread.currentThread().isInterrupted()) {
+                    throw new ServiceException("模型请求参数异常");
+                }
+                log.warn("主模型：{} 意图路由失败，question：{}, 异常信息：{}",chatModel, question, e.getMessage());
+                String callModel = callModel(question, catalog, true);
+                return validateResult(callModel, index, allowedIds);
+            }
+        } catch (Exception e) {
+            log.error("子问题 {} 模型意图路由失败，降级为 NO_MATCH，异常类型：{}",
+                    index, e.getClass().getSimpleName());
+            return new IntentResultDTO().setIndex(index)
+                    .setIntent(IntentEnum.NO_MATCH).setKbIds(List.of());
+        }
+    }
+
+    private String callModel(String question, List<KnowledgeCatalogDTO> catalog, boolean useBackup) throws IOException {
+        Request request = getRequest(question, catalog, useBackup);
+        Call call = httpClient.newCall(request);
+        call.timeout().timeout(useBackup ? timeoutSeconds : backupTimeoutSeconds, TimeUnit.SECONDS);
+        String content;
         try (Response response = call.execute()) {
             ResponseBody body = response.body();
             if (!response.isSuccessful() || body == null) {
@@ -66,24 +101,14 @@ public class Identify {
             if (!"stop".equals(choice.get("finish_reason").getAsString())) {
                 throw new IllegalStateException("意图路由未完整结束");
             }
-            String content = choice.getAsJsonObject("message").get("content").getAsString();
-            int start = content.indexOf('{');
-            int end = content.lastIndexOf('}');
-            if (start < 0 || end < start) {
-                throw new IllegalStateException("意图识别模型未返回完整 JSON 对象");
-            }
-            IntentRespDTO result = gson.fromJson(content.substring(start, end + 1), IntentRespDTO.class);
-            return validateResult(result, index, allowedIds);
-        } catch (Exception e) {
-            log.warn("子问题 {} 模型意图路由失败，降级为 NO_MATCH，异常类型：{}",
-                    index, e.getClass().getSimpleName());
-            return new IntentResultDTO().setIndex(index)
-                    .setIntent(IntentEnum.NO_MATCH).setKbIds(List.of())
-                    .setFallback(true).setErrorType(e.getClass().getSimpleName());
+            content = choice.getAsJsonObject("message").get("content").getAsString();
         }
+        return content;
     }
 
-    /** 只查询知识库的名称和描述；目录供同一轮的各个子问题共享。 */
+    /**
+     * 只查询知识库的名称和描述；目录供同一轮的各个子问题共享。
+     */
     public List<KnowledgeCatalogDTO> loadCatalog() {
         return baseMapper.selectList(Wrappers.<KnowledgeBaseDO>lambdaQuery()
                         .select(KnowledgeBaseDO::getId, KnowledgeBaseDO::getName, KnowledgeBaseDO::getDescription)
@@ -93,7 +118,7 @@ public class Identify {
                 .toList();
     }
 
-    private Request getRequest(String question, List<KnowledgeCatalogDTO> catalog) {
+    private Request getRequest(String question, List<KnowledgeCatalogDTO> catalog, boolean useBackup) {
         JsonObject input = new JsonObject();
         input.addProperty("question", question);
         input.add("knowledgeBases", gson.toJsonTree(catalog));
@@ -113,18 +138,30 @@ public class Identify {
         body.addProperty("stream", false);
         body.addProperty("max_tokens", maxTokens);
         body.addProperty("temperature", temperature);
-        JsonObject thinking = new JsonObject();
-        thinking.addProperty("type", "disabled");
-        body.add("thinking", thinking);
-//        JsonObject responseFormat = new JsonObject();
-//        responseFormat.addProperty("type", "json_object");
-//        body.add("response_format", responseFormat);
-        return new Request.Builder().url(apiUrl.chatCompletionsUrl())
-                .header("Authorization", "Bearer " + apiKey)
-                .post(RequestBody.create(body.toString(), JSON)).build();
+        if (useBackup) {
+            body.addProperty("enable_thinking", false);
+        } else {
+            JsonObject thinking = new JsonObject();
+            thinking.addProperty("type", "disabled");
+            body.add("thinking", thinking);
+        }
+        // JSON 格式由提示词和示例约束；不启用 response_format，避免模型返回空正文。
+        return new Request.Builder()
+                .url(useBackup
+                        ? apiUrl.getUrl().replaceAll("/+$", "") + "/v1/chat/completions"
+                        : apiUrl.chatCompletionsUrl())
+                .header("Authorization", "Bearer " + (useBackup ? backupApiKey : apiKey))
+                .post(RequestBody.create(body.toString(), JSON))
+                .build();
     }
 
-    private IntentResultDTO validateResult(IntentRespDTO response, int index, Set<Long> allowedIds) {
+    private IntentResultDTO validateResult(String content, int index, Set<Long> allowedIds) {
+        int start = content.indexOf('{');
+        int end = content.lastIndexOf('}') + 1;
+        if (start < 0 || end < start) {
+            throw new IllegalStateException("改写模型未返回完整 JSON 对象");
+        }
+        IntentRespDTO response = gson.fromJson(content.substring(start, end), IntentRespDTO.class);
         if (response == null || response.getIntent() == null || response.getKbIds() == null) {
             throw new IllegalStateException("意图路由结果不完整");
         }

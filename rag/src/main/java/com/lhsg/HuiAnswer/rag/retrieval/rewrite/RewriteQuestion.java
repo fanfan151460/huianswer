@@ -141,18 +141,22 @@ public class RewriteQuestion {
         system.addProperty("content", REWRITE_QUESTION);
         messages.add(system);
 
-        // history 已由消息服务筛成完整成功的问答对；subList 只读，不修改原集合。
+        // 历史是待分析数据，不作为本次 API 对话中的 assistant 发言，避免续答旧对话。
         List<SearchMemoryDTO> recentHistory = history == null ? List.of() : history;
         int from = Math.max(0, recentHistory.size() - MAX_HISTORY_MESSAGES);
+        JsonArray historyData = new JsonArray();
         for (SearchMemoryDTO memory : recentHistory.subList(from, recentHistory.size())) {
             JsonObject message = new JsonObject();
             message.addProperty("role", memory.getRole());
             message.addProperty("content", memory.getContent());
-            messages.add(message);
+            historyData.add(message);
         }
+        JsonObject input = new JsonObject();
+        input.add("history", historyData);
+        input.addProperty("question", question);
         JsonObject current = new JsonObject();
         current.addProperty("role", "user");
-        current.addProperty("content", question);
+        current.addProperty("content", input.toString());
         messages.add(current);
 
         JsonObject body = new JsonObject();

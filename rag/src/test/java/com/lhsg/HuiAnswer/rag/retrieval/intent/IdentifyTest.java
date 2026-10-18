@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -36,6 +37,10 @@ class IdentifyTest {
     private final KnowledgeBaseMapper baseMapper = mock(KnowledgeBaseMapper.class);
     private final Map<String, String> outputs = new HashMap<>();
     private final Map<String, Integer> statuses = new HashMap<>();
+    private final Map<String, String> backupOutputs = new HashMap<>();
+    private final Map<String, Integer> backupStatuses = new HashMap<>();
+    private final List<Request> capturedRequests = new ArrayList<>();
+    private final List<Long> capturedTimeoutNanos = new ArrayList<>();
     private final List<JsonObject> capturedBodies = new ArrayList<>();
     private final AtomicInteger requestCount = new AtomicInteger();
     private String finishReason = "stop";
@@ -61,11 +66,15 @@ class IdentifyTest {
             chain.request().body().writeTo(buffer);
             JsonObject request = gson.fromJson(buffer.readUtf8(), JsonObject.class);
             capturedBodies.add(request);
+            capturedRequests.add(chain.request());
+            capturedTimeoutNanos.add(chain.call().timeout().timeoutNanos());
+            boolean backup = "backup.test".equals(chain.request().url().host());
             JsonObject input = gson.fromJson(request.getAsJsonArray("messages").get(1)
                     .getAsJsonObject().get("content").getAsString(), JsonObject.class);
             String question = input.get("question").getAsString();
             JsonObject message = new JsonObject();
-            message.addProperty("content", outputs.getOrDefault(question, "{\"intent\":\"CHAT\",\"kbIds\":[]}"));
+            message.addProperty("content", (backup ? backupOutputs : outputs)
+                    .getOrDefault(question, "{\"intent\":\"CHAT\",\"kbIds\":[]}"));
             JsonObject choice = new JsonObject();
             choice.addProperty("finish_reason", finishReason);
             choice.add("message", message);
@@ -74,12 +83,13 @@ class IdentifyTest {
             JsonObject response = new JsonObject();
             response.add("choices", choices);
             return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
-                    .code(statuses.getOrDefault(question, 200)).message("test-response")
+                    .code((backup ? backupStatuses : statuses).getOrDefault(question, 200)).message("test-response")
                     .body(ResponseBody.create(response.toString(), MediaType.get("application/json"))).build();
         }).build();
         ApiUrl apiUrl = new ApiUrl();
         apiUrl.setChatUrl("http://intent.test");
         apiUrl.setChatPath("/v1/chat/completions");
+        apiUrl.setUrl("http://backup.test");
         identify = new Identify(baseMapper, client, gson, apiUrl);
         ReflectionTestUtils.setField(identify, "apiKey", "fake-key-for-local-test");
         ReflectionTestUtils.setField(identify, "chatModel", "test-model");
@@ -106,7 +116,7 @@ class IdentifyTest {
         assertEquals(List.of(5L), results.get(1).getKbIds());
         assertEquals(IntentEnum.CHAT, results.get(2).getIntent());
         for (JsonObject body : capturedBodies) {
-            assertEquals("json_object", body.getAsJsonObject("response_format").get("type").getAsString());
+            assertFalse(body.has("response_format"));
             assertFalse(body.get("stream").getAsBoolean());
             assertEquals("disabled", body.getAsJsonObject("thinking").get("type").getAsString());
             assertFalse(body.has("enable_thinking"));
@@ -206,13 +216,64 @@ class IdentifyTest {
     }
 
     @Test
-    void databaseAndLocalTimeoutFailuresPropagate() {
+    void databaseFailurePropagatesAndInvalidTimeoutFallsBackToNoMatch() {
         ReflectionTestUtils.setField(identify, "timeoutSeconds", -1);
         var catalog = identify.loadCatalog();
-        assertThrows(IllegalArgumentException.class, () -> identify.identifyOne("会议室规则", 0, catalog));
+        IntentResultDTO result = identify.identifyOne("会议室规则", 0, catalog);
+        assertEquals(IntentEnum.NO_MATCH, result.getIntent());
         when(baseMapper.selectList(any())).thenThrow(new IllegalStateException("test database unavailable"));
         assertThrows(IllegalStateException.class, identify::loadCatalog);
         assertEquals(0, requestCount.get());
+    }
+
+    @Test
+    void backupUsesConfiguredModelProviderAndItsOwnTimeout() {
+        enableBackup();
+        ReflectionTestUtils.setField(identify, "timeoutSeconds", 3);
+        ReflectionTestUtils.setField(identify, "backupTimeoutSeconds", 7);
+        statuses.put("报销规则", 503);
+        backupOutputs.put("报销规则", "{\"intent\":\"KNOWLEDGE\",\"kbIds\":[5]}");
+
+        IntentResultDTO result = identify.identifyOne("报销规则", 2, identify.loadCatalog());
+
+        assertEquals(IntentEnum.KNOWLEDGE, result.getIntent());
+        assertEquals(List.of(5L), result.getKbIds());
+        assertEquals(2, requestCount.get());
+        assertEquals("test-model", capturedBodies.get(0).get("model").getAsString());
+        assertEquals("zai-org/GLM-5.3-Flash", capturedBodies.get(1).get("model").getAsString());
+        assertEquals("intent.test", capturedRequests.get(0).url().host());
+        assertEquals("backup.test", capturedRequests.get(1).url().host());
+        assertEquals("Bearer fake-backup-key", capturedRequests.get(1).header("Authorization"));
+        assertFalse(capturedBodies.get(1).has("response_format"));
+        assertFalse(capturedBodies.get(1).get("enable_thinking").getAsBoolean());
+        assertEquals(List.of(TimeUnit.SECONDS.toNanos(3), TimeUnit.SECONDS.toNanos(7)), capturedTimeoutNanos);
+    }
+
+    @Test
+    void exhaustedBackupFallsBackToNoMatch() {
+        enableBackup();
+        statuses.put("报销规则", 503);
+        backupStatuses.put("报销规则", 503);
+
+        IntentResultDTO result = identify.identifyOne("报销规则", 3, identify.loadCatalog());
+
+        assertEquals(2, requestCount.get());
+        assertEquals(IntentEnum.NO_MATCH, result.getIntent());
+    }
+
+    @Test
+    void validNoMatchDoesNotCallBackup() {
+        outputs.put("外部业务", "{\"intent\":\"NO_MATCH\",\"kbIds\":[]}");
+
+        IntentResultDTO result = identify.identifyOne("外部业务", 0, identify.loadCatalog());
+
+        assertEquals(IntentEnum.NO_MATCH, result.getIntent());
+        assertEquals(1, requestCount.get());
+    }
+
+    private void enableBackup() {
+        ReflectionTestUtils.setField(identify, "backupModel", "zai-org/GLM-5.3-Flash");
+        ReflectionTestUtils.setField(identify, "backupApiKey", "fake-backup-key");
     }
 
     private JsonObject input(JsonObject body) {

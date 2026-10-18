@@ -80,7 +80,9 @@ class RewriteQuestionTest {
         assertFalse(body.has("enable_thinking"));
         JsonArray messages = body.getAsJsonArray("messages");
         assertEquals(2, messages.size());
-        assertEquals(input, messages.get(1).getAsJsonObject().get("content").getAsString());
+        JsonObject data = gson.fromJson(messages.get(1).getAsJsonObject().get("content").getAsString(), JsonObject.class);
+        assertEquals(input, data.get("question").getAsString());
+        assertEquals(0, data.getAsJsonArray("history").size());
     }
 
     @Test
@@ -133,9 +135,17 @@ class RewriteQuestionTest {
         assertEquals(rewritten, result.getRewrittenQuestion());
         assertEquals(List.of(rewritten), result.getSubQuestions());
         JsonArray messages = capturedBody.get().getAsJsonArray("messages");
-        assertEquals(6, messages.size());
-        assertFalse(messages.toString().contains("不应发送"));
-        assertEquals(input, messages.get(5).getAsJsonObject().get("content").getAsString());
+        assertEquals(2, messages.size(), "历史不能作为本次请求的实时对话发言");
+        assertEquals("system", messages.get(0).getAsJsonObject().get("role").getAsString());
+        assertEquals("user", messages.get(1).getAsJsonObject().get("role").getAsString());
+        JsonObject data = gson.fromJson(messages.get(1).getAsJsonObject().get("content").getAsString(), JsonObject.class);
+        JsonArray historyData = data.getAsJsonArray("history");
+        assertEquals(4, historyData.size());
+        assertEquals("信用分低于60分时，还能预约会议室吗？",
+                historyData.get(0).getAsJsonObject().get("content").getAsString());
+        assertEquals("assistant", historyData.get(3).getAsJsonObject().get("role").getAsString());
+        assertFalse(data.toString().contains("不应发送"));
+        assertEquals(input, data.get("question").getAsString());
         assertEquals(6, history.size());
     }
 

@@ -115,11 +115,11 @@ public class RewriteQuestion {
             throw new IllegalStateException("改写模型返回空正文");
         }
         int start = content.indexOf('{');
-        int end = content.lastIndexOf('}');
+        int end = content.lastIndexOf('}') + 1;
         if (start < 0 || end < start) {
             throw new IllegalStateException("改写模型未返回完整 JSON 对象");
         }
-        RewriteResultDTO result = gson.fromJson(content.substring(start, end + 1), RewriteResultDTO.class);
+        RewriteResultDTO result = gson.fromJson(content.substring(start, end), RewriteResultDTO.class);
         if (result == null || StrUtil.isBlank(result.getRewrittenQuestion())
                 || result.getSubQuestions() == null || result.getSubQuestions().isEmpty()
                 || result.getSubQuestions().stream().anyMatch(StrUtil::isBlank)) {

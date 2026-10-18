@@ -157,7 +157,7 @@ public class Identify {
 
     private IntentResultDTO validateResult(String content, int index, Set<Long> allowedIds) {
         int start = content.indexOf('{');
-        int end = content.lastIndexOf('}');
+        int end = content.lastIndexOf('}') + 1;
         if (start < 0 || end < start) {
             throw new IllegalStateException("改写模型未返回完整 JSON 对象");
         }

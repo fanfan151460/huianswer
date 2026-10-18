@@ -8,8 +8,8 @@ import com.lhsg.HuiAnswer.rag.assessment.resp.AssessChunkResp;
 import com.lhsg.HuiAnswer.rag.retrieval.rerank.RerankChunks;
 import com.lhsg.HuiAnswer.rag.retrieval.search.SearchChunks;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -22,7 +22,7 @@ public class ChunkAssess {
     private final SearchChunks searchChunks;
     private final RerankChunks rerankChunks;
 
-    @RequestMapping("/api/evaluation/retrieval")
+    @PostMapping("/api/evaluation/retrieval")
     public AssessChunkResp vectorAssess(@RequestBody ChunkAssessReq chunkAssessReq) {
         long start = System.nanoTime();
         List<AssessChunk> assessList;

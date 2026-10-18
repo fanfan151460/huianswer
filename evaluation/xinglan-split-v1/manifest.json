@@ -1,0 +1,59 @@
+{
+  "dataset_id": "xinglan-split-v1",
+  "version": "1.0",
+  "created_date": "2026-10-18",
+  "synthetic": true,
+  "base_dataset_id": "xinglan-shop-v2",
+  "new_documents": 0,
+  "dev_case_count": 6,
+  "strategies": [
+    "whole",
+    "split"
+  ],
+  "history_mode": "empty",
+  "final_top_k": 6,
+  "documents": [
+    {
+      "source_id": "D01",
+      "kb_key": "shipping",
+      "path": "../xinglan-shop-v2/../xinglan-shop-v1/corpus/shipping/D01_配送范围与时效.txt",
+      "sha256": "0f72d1d52de35be49b454456341a754a60b59e1531d4c15f54714389295f0c57"
+    },
+    {
+      "source_id": "O01",
+      "kb_key": "orders",
+      "path": "../xinglan-shop-v2/../xinglan-shop-v1/corpus/orders/O01_下单支付与订单状态.txt",
+      "sha256": "36d34792b4b2e311efee241b72afa7e6f45b0764c63fa3c0da06a650ecb8d25d"
+    },
+    {
+      "source_id": "O04",
+      "kb_key": "orders",
+      "path": "../xinglan-shop-v2/../xinglan-shop-v1/corpus/orders/O04_发票与交易凭证.txt",
+      "sha256": "59605d047f15e21d19da98f54cc7e690bb032f6a4dbe78ce465472880d3e7134"
+    },
+    {
+      "source_id": "P03",
+      "kb_key": "products",
+      "path": "../xinglan-shop-v2/../xinglan-shop-v1/corpus/products/P03_操作保养与滤芯复位.txt",
+      "sha256": "954cc5441b2a176131c07fb919813a757296ffd2d6291f8f30d5dde8af33ca08"
+    },
+    {
+      "source_id": "P04",
+      "kb_key": "products",
+      "path": "../xinglan-shop-v2/../xinglan-shop-v1/corpus/products/P04_错误码与故障排查.txt",
+      "sha256": "91360d1dae26e3eaf3af50430234ee3dda86fb0277b04cde626100a26ede62be"
+    },
+    {
+      "source_id": "S03",
+      "kb_key": "aftersales",
+      "path": "../xinglan-shop-v2/../xinglan-shop-v1/corpus/aftersales/S03_售后费用与退款范围.txt",
+      "sha256": "442b1805e2d12e1133bb58f388c8a7a83841cab4fbac020d36954b0464afbbe9"
+    }
+  ],
+  "scope": "比较完整问题路由检索与子问题并行路由检索；两路均统一重排，不生成回答",
+  "limitations": [
+    "仅6道开发题，不能代表总体效果",
+    "两个请求分别调用改写；报告标记改写输出是否不同",
+    "接口不返回子问题路由、召回候选数或重排降级状态，不能据此证明各内部阶段均无异常"
+  ]
+}

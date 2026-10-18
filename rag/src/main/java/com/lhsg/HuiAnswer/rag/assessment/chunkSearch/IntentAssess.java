@@ -13,7 +13,7 @@ import com.lhsg.HuiAnswer.rag.retrieval.intent.Identify;
 import com.lhsg.HuiAnswer.rag.retrieval.rewrite.RewriteQuestion;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
@@ -27,7 +27,7 @@ public class IntentAssess {
     private final SummaryServiceImpl summaryService;
     private final Identify identify;
 
-    @RequestMapping("/api/evaluation/intent")
+    @PostMapping("/api/evaluation/intent")
     public List<IntentAssessResp> intentAssess(IntentAssessReq req) {
         List<IntentAssessResp> IntentAssessList = new ArrayList<>();
         Long userId = UsersContext.requireUserId();

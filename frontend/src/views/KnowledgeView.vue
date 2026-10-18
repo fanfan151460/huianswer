@@ -8,6 +8,7 @@ const bases = ref([]), loading = ref(true), error = ref(''), selected = ref(null
 const documents = ref([]), docLoading = ref(false), docError = ref(''), page = ref(1), total = ref(0)
 const baseModal = ref(false), editing = ref(null), baseName = ref(''), description = ref(''), saving = ref(false)
 const fileInput = ref(null), uploading = ref(false), dragOver = ref(false), actionId = ref(null)
+const chunkStrategy = ref('OVERLAP')
 const chunkDoc = ref(null), chunks = ref([]), chunkPage = ref(1), chunkTotal = ref(0), chunkLoading = ref(false), chunkError = ref('')
 const visibleBases = computed(() => bases.value.filter(b => b.name.toLowerCase().includes(query.value.toLowerCase())))
 let poll = null, docIndex = 0, chunkIndex = 0, alive = true
@@ -55,9 +56,9 @@ async function uploadFiles(fileList) {
   if (!selected.value || uploading.value) return
   const files = [...(fileList || [])]; if (!files.length) return
   if (files.some(f => !/\.(txt|md|pdf|doc|docx)$/i.test(f.name) || !f.size || f.size > 10 * 1024 * 1024)) { notify('请选择非空的 TXT、MD、PDF 或 Word 文件，每份不超过 10 MB', 'error'); return }
-  uploading.value = true; const kb = selected.value.id
+  uploading.value = true; const kb = selected.value.id, strategy = chunkStrategy.value
   try {
-    for (const file of files) { const body = new FormData(); body.append('file', file); const result = await api(docPath(kb), { method: 'POST', body }); if (result.status === 'failed') throw new Error(result.errorMessage || '文档任务提交失败，可在列表中重试') }
+    for (const file of files) { const body = new FormData(); body.append('file', file); body.append('strategy', strategy); const result = await api(docPath(kb), { method: 'POST', body }); if (result.status === 'failed') throw new Error(result.errorMessage || '文档任务提交失败，可在列表中重试') }
     if (selected.value?.id === kb) { if (page.value !== 1) page.value = 1; else await loadDocuments() }
     notify(files.length === 1 ? '文档已上传，正在处理' : `${files.length} 份文档已上传，正在处理`)
   } catch (e) { notify(e.message, 'error'); if (selected.value?.id === kb) await loadDocuments() }
@@ -90,6 +91,7 @@ function closeChunks() { ++chunkIndex; chunkDoc.value = null; chunkTotal.value =
   <div v-else-if="!bases.length" class="empty-state knowledge-empty"><Icon name="book" :size="36"/><h2>给知识一个安放的地方</h2><p>先创建知识库，再上传你的第一份文档。</p><button class="button primary" @click="openBase()">创建知识库</button></div>
   <div v-else class="knowledge-workspace"><aside class="base-list"><div class="base-list-title"><span>全部知识库</span><span>{{ bases.length }}</span></div><label class="search-input"><Icon name="search" :size="17"/><input v-model="query" placeholder="搜索知识库" aria-label="搜索知识库"/></label><p v-if="!visibleBases.length" class="muted no-base-match">没有匹配的知识库</p><button v-for="(base, index) in visibleBases" :key="base.id" :class="['base-item', { active: selected?.id === base.id }]" :disabled="uploading" @click="selected = base"><span :class="['base-symbol', 'tone-' + index % 4]"><Icon name="book" :size="19"/></span><span><strong>{{ base.name }}</strong><small>{{ base.description || '暂未填写说明' }}</small></span><Icon name="chevron" :size="15"/></button></aside>
     <section v-if="selected" class="documents-area"><div class="base-detail-head"><div><h2>{{ selected.name }}</h2><p>{{ selected.description || '为这个知识库补充说明，方便理解资料的适用范围。' }}</p></div><div class="base-actions"><button class="icon-button" aria-label="编辑知识库" title="编辑知识库" :disabled="saving || uploading" @click="openBase(selected)"><Icon name="edit" :size="18"/></button><button class="icon-button danger-text" aria-label="删除知识库" title="删除知识库" :disabled="saving || uploading" @click="deleteBase"><Icon name="trash" :size="18"/></button></div></div>
+    <div class="upload-options"><label for="chunk-strategy">分块方式</label><select id="chunk-strategy" v-model="chunkStrategy" :disabled="uploading"><option value="OVERLAP">滑动重叠分块</option><option value="RECURSIVE">递归分块</option></select></div>
     <div :class="['upload-zone', { dragging: dragOver, uploading }]" @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop="drop"><span class="upload-symbol"><span v-if="uploading" class="spinner"/><Icon v-else name="upload" :size="24"/></span><div><strong>{{ uploading ? '正在上传文档…' : '把资料带进来' }}</strong><p>拖拽文件到这里，或选择本地文件</p><small>TXT、Markdown、文本型 PDF、Word（DOC/DOCX）· 每份不超过 10 MB</small></div><button class="button secondary" :disabled="uploading" @click="fileInput.click()"><Icon name="plus" :size="16"/>选择文件</button><input ref="fileInput" type="file" accept=".txt,.md,.pdf,.doc,.docx" multiple hidden @change="uploadFiles($event.target.files)"/></div>
     <div class="documents-toolbar"><h3>文档<span>{{ total }}</span></h3><button class="text-button" :disabled="docLoading" @click="loadDocuments()"><Icon name="refresh" :size="15"/>刷新</button></div>
     <div v-if="docLoading" class="loading-state"><span class="spinner"/>正在读取文档…</div>
@@ -102,3 +104,10 @@ function closeChunks() { ++chunkIndex; chunkDoc.value = null; chunkTotal.value =
   <Modal :open="baseModal" :title="editing ? '编辑知识库' : '创建知识库'" :busy="saving" @close="baseModal = false"><form @submit.prevent="saveBase"><label class="field-label" for="base-name">知识库名称</label><input id="base-name" v-model="baseName" maxlength="128" placeholder="例如：星澜商城售后规则" required autofocus/><label class="field-label" for="base-description">业务说明</label><textarea id="base-description" v-model="description" rows="4" maxlength="1000" placeholder="说明资料涵盖的主题、产品和适用范围。"/><p class="field-help">清晰的说明，有助于慧答找到合适的资料。</p><div class="modal-actions"><button type="button" class="button secondary" :disabled="saving" @click="baseModal = false">取消</button><button class="button primary" :disabled="saving || !baseName.trim()">{{ saving ? '保存中…' : '保存知识库' }}</button></div></form></Modal>
   <Modal :open="Boolean(chunkDoc)" :title="chunkDoc?.docName || '文档片段'" wide @close="closeChunks"><div class="chunk-panel"><p class="muted">文档解析后的参考片段，按原文顺序展示。</p><div v-if="chunkLoading" class="loading-state"><span class="spinner"/>正在读取片段…</div><div v-else-if="chunkError" class="inline-error">{{ chunkError }}</div><div v-else-if="!chunks.length" class="empty-state">暂无片段</div><section v-for="chunk in chunkLoading ? [] : chunks" :key="chunk.id" class="chunk-item"><span>片段 {{ chunk.chunkIndex + 1 }}</span><p>{{ chunk.content }}</p></section><div v-if="chunkTotal > 5" class="pagination"><span>共 {{ chunkTotal }} 个片段</span><div><button class="icon-button previous" aria-label="上一页片段" :disabled="chunkPage <= 1 || chunkLoading" @click="chunkPage--; loadChunks()"><Icon name="chevron" :size="17"/></button><span>{{ chunkPage }} / {{ Math.ceil(chunkTotal / 5) }}</span><button class="icon-button" aria-label="下一页片段" :disabled="chunkPage * 5 >= chunkTotal || chunkLoading" @click="chunkPage++; loadChunks()"><Icon name="chevron" :size="17"/></button></div></div></div></Modal>
 </template>
+
+<style scoped>
+.upload-options { display: flex; align-items: center; gap: 12px; margin-top: 18px; color: var(--muted); font-size: 13px; }
+.upload-options select { min-height: 40px; max-width: 100%; padding: 8px 12px; border: 1px solid #dce2d7; border-radius: var(--r-sm); background: var(--surface); color: var(--ink); font: inherit; }
+.upload-options select:focus-visible { outline: 2px solid #91ae9b; outline-offset: 1px; }
+.upload-options select:disabled { opacity: .55; cursor: not-allowed; }
+</style>

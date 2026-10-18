@@ -5,6 +5,7 @@ import com.lhsg.HuiAnswer.framework.monitor.TimeAnnotation;
 import com.lhsg.HuiAnswer.framework.result.Result;
 import com.lhsg.HuiAnswer.framework.result.Results;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeDocumentRespDTO;
+import com.lhsg.HuiAnswer.rag.knowledge.enums.SplitStrategy;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.req.UpdateDocumentEnabledReqDTO;
 import jakarta.validation.Valid;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeDocumentService;
@@ -51,8 +52,9 @@ public class KnowledgeDocumentController {
     @TimeAnnotation(method = "上传并解析文档")
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<KnowledgeDocumentRespDTO> upload(@PathVariable("kbId") Long kbId,
-                                                  @RequestPart("file") MultipartFile file) {
-        return Results.success(knowledgeDocumentService.uploadDocument(kbId, file));
+                                                  @RequestPart("file") MultipartFile file,
+                                                  @RequestParam(name = "strategy", defaultValue = "OVERLAP") SplitStrategy strategy) {
+        return Results.success(knowledgeDocumentService.uploadDocument(kbId, file, strategy));
     }
 
     @TimeAnnotation(method = "重试解析文档")

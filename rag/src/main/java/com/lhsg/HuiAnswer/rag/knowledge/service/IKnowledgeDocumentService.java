@@ -4,13 +4,14 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeDocumentRespDTO;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeChunkRespDTO;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg;
+import com.lhsg.HuiAnswer.rag.knowledge.enums.SplitStrategy;
 import org.springframework.web.multipart.MultipartFile;
 
 
 public interface IKnowledgeDocumentService {
 
-    /** 上传文档 */
-    KnowledgeDocumentRespDTO uploadDocument(Long kbId, MultipartFile file);
+    /** 上传文档，使用调用方选择的分块策略。 */
+    KnowledgeDocumentRespDTO uploadDocument(Long kbId, MultipartFile file, SplitStrategy strategy);
 
     /** 分页查询知识库下的文档，包含禁用文档。 */
     IPage<KnowledgeDocumentRespDTO> listDocument(Long kbId, long current, long size);

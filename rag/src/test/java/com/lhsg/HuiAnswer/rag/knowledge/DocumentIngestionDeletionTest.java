@@ -1,6 +1,8 @@
 package com.lhsg.HuiAnswer.rag.knowledge;
 
 import com.google.gson.Gson;
+import com.lhsg.HuiAnswer.rag.admin.user.UserDTO;
+import com.lhsg.HuiAnswer.rag.admin.user.UsersContext;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeBaseDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeDocumentDO;
@@ -11,6 +13,7 @@ import com.lhsg.HuiAnswer.rag.knowledge.document.parser.ParsedDocument;
 import com.lhsg.HuiAnswer.rag.knowledge.document.parser.DocumentTypeValidator;
 import com.lhsg.HuiAnswer.rag.knowledge.document.parser.TikaDocumentParser;
 import com.lhsg.HuiAnswer.rag.knowledge.document.storage.LocalDocumentStorage;
+import com.lhsg.HuiAnswer.rag.knowledge.enums.SplitStrategy;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeChunkService;
@@ -18,6 +21,7 @@ import com.lhsg.HuiAnswer.rag.knowledge.service.impl.KnowledgeDocumentServiceImp
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -40,12 +44,13 @@ class DocumentIngestionDeletionTest {
     private final IKnowledgeChunkService chunkService = mock(IKnowledgeChunkService.class);
     private final TransactionTemplate transaction = mock(TransactionTemplate.class);
     private final TransactionStatus status = mock(TransactionStatus.class);
+    private final DocumentProducer producer = mock(DocumentProducer.class);
     private KnowledgeDocumentServiceImpl service;
 
     @BeforeEach
     void setUp() {
         service = new KnowledgeDocumentServiceImpl(bases, documents, chunks, storage, parser, mock(DocumentTypeValidator.class), new Gson(),
-                chunkService, transaction, mock(DocumentProducer.class));
+                chunkService, transaction, producer);
         when(bases.selectActiveForUpdate(1L)).thenReturn(new KnowledgeBaseDO().setId(1L));
         when(documents.updateById(any(KnowledgeDocumentDO.class))).thenReturn(1);
         when(transaction.execute(any())).thenAnswer(call -> {
@@ -96,11 +101,63 @@ class DocumentIngestionDeletionTest {
         verify(chunkService).saveChunks(anyList());
     }
 
+    @Test
+    void uploadPersistsTheSelectedStrategyAndPassesItToTheMessage() throws Exception {
+        UserDTO user = new UserDTO();
+        user.setId(7L);
+        UsersContext.setUserDTO(user);
+        try {
+            when(bases.selectById(1L)).thenReturn(new KnowledgeBaseDO().setId(1L));
+            when(documents.insert(any(KnowledgeDocumentDO.class))).thenAnswer(call -> {
+                KnowledgeDocumentDO stored = call.getArgument(0);
+                stored.setId(101L);
+                when(documents.selectById(101L)).thenReturn(stored);
+                return 1;
+            });
+            MockMultipartFile file = new MockMultipartFile("file", "rules.txt", "text/plain", "rules".getBytes());
+
+            service.uploadDocument(1L, file, SplitStrategy.RECURSIVE);
+
+            ArgumentCaptor<KnowledgeDocumentDO> inserted = ArgumentCaptor.forClass(KnowledgeDocumentDO.class);
+            verify(documents).insert(inserted.capture());
+            assertEquals("RECURSIVE", new Gson().fromJson(inserted.getValue().getMetadata(),
+                    com.google.gson.JsonObject.class).get("splitStrategy").getAsString());
+            verify(producer).send(argThat(msg -> msg.getKbId().equals(1L)
+                    && msg.getDocId().equals(101L) && msg.getStrategy() == SplitStrategy.RECURSIVE));
+        } finally {
+            UsersContext.removeUserDTO();
+        }
+    }
+
+    @Test
+    void manualRetryKeepsTheStrategyStoredAtUpload() throws Exception {
+        KnowledgeDocumentDO failed = document(0).setStatus("failed")
+                .setMetadata("{\"splitStrategy\":\"RECURSIVE\",\"errorMessage\":\"failed\"}");
+        when(bases.selectById(1L)).thenReturn(new KnowledgeBaseDO().setId(1L));
+        when(documents.selectById(101L)).thenReturn(failed);
+
+        service.retryDocument(1L, 101L);
+
+        verify(producer).send(argThat(msg -> msg.getStrategy() == SplitStrategy.RECURSIVE));
+        assertEquals("RECURSIVE", new Gson().fromJson(failed.getMetadata(),
+                com.google.gson.JsonObject.class).get("splitStrategy").getAsString());
+    }
+
+    @Test
+    void retryOfOldDocumentUsesOverlap() throws Exception {
+        when(bases.selectById(1L)).thenReturn(new KnowledgeBaseDO().setId(1L));
+        when(documents.selectById(101L)).thenReturn(document(0).setStatus("failed"));
+
+        service.retryDocument(1L, 101L);
+
+        verify(producer).send(argThat(msg -> msg.getStrategy() == SplitStrategy.OVERLAP));
+    }
+
     private void prepareParsing() throws Exception {
         when(storage.open("unused-test-path")).thenReturn(new ByteArrayInputStream(new byte[0]));
         when(parser.parse(any(InputStream.class), eq("rules.txt"), eq("txt")))
                 .thenReturn(new ParsedDocument("full text", "text/plain"));
-        when(chunkService.toChunks("full text")).thenReturn(List.of("full text"));
+        when(chunkService.toChunks("full text", SplitStrategy.OVERLAP)).thenReturn(List.of("full text"));
         when(chunkService.prepareChunks(List.of("full text"), 1L, 101L))
                 .thenReturn(List.of(new KnowledgeChunkDO().setKbId(1L).setDocId(101L)
                         .setChunkIndex(0).setContent("full text")));

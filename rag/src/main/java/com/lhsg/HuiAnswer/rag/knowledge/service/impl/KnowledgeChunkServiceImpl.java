@@ -1,11 +1,12 @@
 package com.lhsg.HuiAnswer.rag.knowledge.service.impl;
 
-import cn.hutool.core.util.StrUtil;
-import com.lhsg.HuiAnswer.framework.exception.ClientException;
 import com.lhsg.HuiAnswer.framework.exception.ServiceException;
+import com.lhsg.HuiAnswer.rag.knowledge.ChunkStrategy.OverlapChunk;
+import com.lhsg.HuiAnswer.rag.knowledge.ChunkStrategy.RecursionChunk;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeChunkDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.embedding.EmbeddingChunks;
+import com.lhsg.HuiAnswer.rag.knowledge.enums.SplitStrategy;
 import com.lhsg.HuiAnswer.rag.knowledge.keyWordUtil.ToKeyWord;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeChunkService;
 import jakarta.annotation.PostConstruct;
@@ -22,49 +23,41 @@ import java.util.List;
 public class KnowledgeChunkServiceImpl implements IKnowledgeChunkService {
 
     @Value("${rag.chunk.chunk-size}")
-    private int CHUNK_SIZE;
+    private int chunkSize;
     @Value("${rag.chunk.OVERLAP}")
-    private int OVERLAP;
+    private int overlap;
+    @Value("${rag.chunk.recursion}")
+    private int recursionChunkSize;
     private static final int INSERT_BATCH_SIZE = 100;
-
     private final EmbeddingChunks embeddingChunks;
     private final KnowledgeChunkMapper chunkMapper;
 
     @PostConstruct
     private void validateConfiguration() {
-        if (CHUNK_SIZE <= 0 || OVERLAP < 0 || OVERLAP >= CHUNK_SIZE) {
+        if (chunkSize <= 0 || overlap < 0 || overlap >= chunkSize) {
             throw new IllegalArgumentException("分块大小必须大于0，重叠必须满足0 <= overlap < chunkSize");
+        }
+        if (recursionChunkSize <= 0) {
+            throw new IllegalArgumentException("递归分块大小必须大于0");
         }
     }
 
     /**
      * 文档文本切块
+     *
      * @param text 文档内容
      * @return 分块集合
      */
     @Override
-    public List<String> toChunks(String text) {
-        validateConfiguration();
-        if (StrUtil.isBlank(text)) {
-            throw new ClientException("文档内容为空");
+    public List<String> toChunks(String text, SplitStrategy strategy) {
+        // 兼容没有携带策略的旧消息，继续使用原来的滑动重叠策略。
+        if (strategy == null) {
+            strategy = SplitStrategy.OVERLAP;
         }
-        // 按 Unicode 字符计数，避免 substring 把 emoji 的 UTF-16 代理对切开。
-        int[] characters = text.codePoints().toArray();
-        List<String> chunks = new ArrayList<>();
-        int start = 0;
-        while (start < characters.length) {
-            int end = Math.min(start + CHUNK_SIZE, characters.length);
-            String content = new String(characters, start, end - start);
-            if (!content.isBlank()) {
-                chunks.add(content);
-            }
-            // 到达全文末尾即结束；最后不足一块也保留，不再单独生成重叠尾块。
-            if (end == characters.length) {
-                break;
-            }
-            start = end - OVERLAP;
-        }
-        return chunks;
+        return switch (strategy) {
+            case OVERLAP -> OverlapChunk.toChunks(text, chunkSize, overlap);
+            case RECURSIVE -> RecursionChunk.recursionChunk(text, recursionChunkSize);
+        };
     }
 
     @Override

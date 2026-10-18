@@ -108,6 +108,7 @@ rag:
   chunk:
     chunk-size: 500
     OVERLAP: 100
+    recursion: 200
   memory:
     summary: true
     turns: 8

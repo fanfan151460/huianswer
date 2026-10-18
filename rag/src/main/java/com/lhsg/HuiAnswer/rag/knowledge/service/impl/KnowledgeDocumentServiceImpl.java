@@ -23,6 +23,7 @@ import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.DocumentMetadataDTO;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeDocumentRespDTO;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeChunkRespDTO;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg;
+import com.lhsg.HuiAnswer.rag.knowledge.enums.SplitStrategy;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.producer.DocumentProducer;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeChunkService;
 import com.lhsg.HuiAnswer.rag.knowledge.service.IKnowledgeDocumentService;
@@ -61,7 +62,7 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
 
     @Override
     @NoDuplicateSubmit
-    public KnowledgeDocumentRespDTO uploadDocument(Long kbId, MultipartFile file) {
+    public KnowledgeDocumentRespDTO uploadDocument(Long kbId, MultipartFile file, SplitStrategy strategy) {
         Long createdBy = UsersContext.requireUserId();
         validateKbId(kbId);
         String name = validateFile(file);
@@ -77,6 +78,7 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
         metadata.addProperty("fileSize", file.getSize());
         metadata.addProperty("extension", extension);
         metadata.addProperty("mediaType", mediaType);
+        metadata.addProperty("splitStrategy", (strategy == null ? SplitStrategy.OVERLAP : strategy).name());
         KnowledgeDocumentDO document = new KnowledgeDocumentDO().setKbId(kbId).setCreatedBy(createdBy)
                 .setDocName(name).setFilePath(path).setStatus(FILE_PENDING.status()).setEnabled(0)
                 .setMetadata(metadata.toString());
@@ -96,7 +98,12 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
     }
 
     private KnowledgeDocumentRespDTO enqueue(KnowledgeDocumentDO document) {
-        DocumentMsg msg = new DocumentMsg().setKbId(document.getKbId()).setDocId(document.getId());
+        // 从文档元数据恢复策略，手动重试也沿用上传时的选择；旧文档使用原策略。
+        JsonObject metadata = readMetadata(document);
+        SplitStrategy strategy = metadata.has("splitStrategy")
+                ? SplitStrategy.valueOf(metadata.get("splitStrategy").getAsString()) : SplitStrategy.OVERLAP;
+        DocumentMsg msg = new DocumentMsg().setKbId(document.getKbId()).setDocId(document.getId())
+                .setStrategy(strategy);
         try {
             producer.send(msg);
         } catch (Exception e) {
@@ -172,7 +179,7 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
             metadata.addProperty("mediaType", parsed.mediaType());
             metadata.addProperty("textLength", text.length());
             // 执行分块
-            List<String> chunks = chunkService.toChunks(text);
+            List<String> chunks = chunkService.toChunks(text, msg.getStrategy());
             // 向量化分块，解析、分块、模型 HTTP 调用都在事务外。
             List<KnowledgeChunkDO> records = chunkService.prepareChunks(chunks, msg.getKbId(), msg.getDocId());
             transactionTemplate.executeWithoutResult(status -> {

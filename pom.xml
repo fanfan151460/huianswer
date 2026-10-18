@@ -20,6 +20,7 @@
         <java.version>17</java.version>
         <spring-boot.version>3.0.7</spring-boot.version>
         <tika.version>3.2.3</tika.version>
+        <commons-lang3.version>3.18.0</commons-lang3.version>
         <postgis.version>2024.1.0</postgis.version>
         <okhttp.version>4.12.0</okhttp.version>
         <gson.version>2.13.1</gson.version>
@@ -70,6 +71,18 @@
                 <groupId>org.apache.tika</groupId>
                 <artifactId>tika-parser-pdf-module</artifactId>
                 <version>${tika.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tika</groupId>
+                <artifactId>tika-parser-microsoft-module</artifactId>
+                <version>${tika.version}</version>
+            </dependency>
+
+            <!-- 对齐 Tika 3.2.3 的 Commons Lang，避免 Boot BOM 的旧版本缺少 SystemProperties。 -->
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>${commons-lang3.version}</version>
             </dependency>
 
             <!-- OkHttp: HTTP客户端，调SiliconFlow API -->

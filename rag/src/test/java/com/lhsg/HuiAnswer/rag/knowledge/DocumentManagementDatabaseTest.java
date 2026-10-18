@@ -16,6 +16,7 @@ import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeDocumentDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeDocumentMapper;
+import com.lhsg.HuiAnswer.rag.knowledge.document.parser.DocumentTypeValidator;
 import com.lhsg.HuiAnswer.rag.knowledge.document.parser.TikaDocumentParser;
 import com.lhsg.HuiAnswer.rag.knowledge.document.storage.LocalDocumentStorage;
 import com.lhsg.HuiAnswer.rag.knowledge.dto.resp.KnowledgeChunkRespDTO;
@@ -140,7 +141,8 @@ class DocumentManagementDatabaseTest {
                         session.getMapper(KnowledgeBaseMapper.class),
                         session.getMapper(KnowledgeDocumentMapper.class),
                         session.getMapper(KnowledgeChunkMapper.class),
-                        mock(LocalDocumentStorage.class), mock(TikaDocumentParser.class), new Gson(),
+                        mock(LocalDocumentStorage.class), mock(TikaDocumentParser.class),
+                        mock(DocumentTypeValidator.class), new Gson(),
                         mock(IKnowledgeChunkService.class), transaction, mock(DocumentProducer.class));
                 assertions.accept(service, session);
             } catch (SQLException e) {

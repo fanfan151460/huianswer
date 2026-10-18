@@ -37,6 +37,11 @@ public class KnowledgeChunkServiceImpl implements IKnowledgeChunkService {
         }
     }
 
+    /**
+     * 文档文本切块
+     * @param text 文档内容
+     * @return 分块集合
+     */
     @Override
     public List<String> toChunks(String text) {
         validateConfiguration();

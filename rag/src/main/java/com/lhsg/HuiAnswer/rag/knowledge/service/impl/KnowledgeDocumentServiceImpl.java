@@ -15,6 +15,7 @@ import com.lhsg.HuiAnswer.rag.knowledge.dao.entity.KnowledgeDocumentDO;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
+import com.lhsg.HuiAnswer.rag.knowledge.document.parser.DocumentTypeValidator;
 import com.lhsg.HuiAnswer.rag.knowledge.document.parser.ParsedDocument;
 import com.lhsg.HuiAnswer.rag.knowledge.document.parser.TikaDocumentParser;
 import com.lhsg.HuiAnswer.rag.knowledge.document.storage.LocalDocumentStorage;
@@ -45,13 +46,14 @@ import static com.lhsg.HuiAnswer.rag.knowledge.enums.ParseStatus.*;
 @RequiredArgsConstructor
 public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
     private static final long MAX_FILE_BYTES = 10L * 1024 * 1024;
-    private static final Set<String> EXTENSIONS = Set.of("txt", "md", "pdf");
+    private static final Set<String> EXTENSIONS = Set.of("txt", "md", "pdf", "doc", "docx");
 
     private final KnowledgeBaseMapper baseMapper;
     private final KnowledgeDocumentMapper documentMapper;
     private final KnowledgeChunkMapper chunkMapper;
     private final LocalDocumentStorage storage;
     private final TikaDocumentParser parser;
+    private final DocumentTypeValidator typeValidator;
     private final Gson gson;
     private final IKnowledgeChunkService chunkService;
     private final TransactionTemplate transactionTemplate;
@@ -67,12 +69,14 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
         if (baseMapper.selectById(kbId) == null) {
             throw new ClientException("知识库不存在或已被删除");
         }
-        // TODO 防止伪造文件扩展名
         String extension = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+        // 通过实际内容校验后再落盘、登记文档和发送消息。
+        String mediaType = typeValidator.validate(file, extension);
         String path = storage.save(kbId, file, extension);
         JsonObject metadata = new JsonObject();
         metadata.addProperty("fileSize", file.getSize());
         metadata.addProperty("extension", extension);
+        metadata.addProperty("mediaType", mediaType);
         KnowledgeDocumentDO document = new KnowledgeDocumentDO().setKbId(kbId).setCreatedBy(createdBy)
                 .setDocName(name).setFilePath(path).setStatus(FILE_PENDING.status()).setEnabled(0)
                 .setMetadata(metadata.toString());
@@ -335,7 +339,7 @@ public class KnowledgeDocumentServiceImpl implements IKnowledgeDocumentService {
         }
         int dot = name.lastIndexOf('.');
         if (dot <= 0 || !EXTENSIONS.contains(name.substring(dot + 1).toLowerCase(Locale.ROOT))) {
-            throw new ClientException("目前只支持txt、md和带文字的pdf文件");
+            throw new ClientException("目前只支持txt、md、doc、docx和带文字的pdf文件");
         }
         return name;
     }

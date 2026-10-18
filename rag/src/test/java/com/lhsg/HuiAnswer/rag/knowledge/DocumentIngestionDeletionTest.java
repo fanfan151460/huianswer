@@ -8,6 +8,7 @@ import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.lhsg.HuiAnswer.rag.knowledge.document.parser.ParsedDocument;
+import com.lhsg.HuiAnswer.rag.knowledge.document.parser.DocumentTypeValidator;
 import com.lhsg.HuiAnswer.rag.knowledge.document.parser.TikaDocumentParser;
 import com.lhsg.HuiAnswer.rag.knowledge.document.storage.LocalDocumentStorage;
 import com.lhsg.HuiAnswer.rag.knowledge.mq.base.DocumentMsg;
@@ -43,7 +44,7 @@ class DocumentIngestionDeletionTest {
 
     @BeforeEach
     void setUp() {
-        service = new KnowledgeDocumentServiceImpl(bases, documents, chunks, storage, parser, new Gson(),
+        service = new KnowledgeDocumentServiceImpl(bases, documents, chunks, storage, parser, mock(DocumentTypeValidator.class), new Gson(),
                 chunkService, transaction, mock(DocumentProducer.class));
         when(bases.selectActiveForUpdate(1L)).thenReturn(new KnowledgeBaseDO().setId(1L));
         when(documents.updateById(any(KnowledgeDocumentDO.class))).thenReturn(1);

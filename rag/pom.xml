@@ -55,7 +55,7 @@
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-core</artifactId>
         </dependency>
-        <!-- 当前只需要 TXT 和 PDF 解析器，不引入整套 Office/图像解析依赖。 -->
+        <!-- 按需引入文本、PDF 和 Microsoft Office 解析器。 -->
         <dependency>
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-parser-text-module</artifactId>
@@ -64,6 +64,10 @@
         <dependency>
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-parser-pdf-module</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parser-microsoft-module</artifactId>
         </dependency>
         <!-- 版本由父 POM 的 dependencyManagement 统一管理。 -->
         <dependency>
